@@ -159,7 +159,15 @@ PY
 #   - 旧 Bash 实现对每行 × 每关键词都 fork 'echo | tr' 子进程做大小写折叠
 #     ；10 关键词扫几千行索引 = 上万次 fork，超时严重。
 #   - 新实现：把整个索引扫描和打分搬到单次 Python 调用，复杂度同前但
-#     无 fork 开销，且评分模型保留原有 header×3 + body×1 + sqrt(n) 归一化。
+#     无 fork 开销。
+# v2.4: BM25 评分替换 sqrt(n) 归一化（评审 3.1）
+#   - 旧 sqrt(n) 归一化无理论锚点；header×3 + body×1 + 单 chunk 最多投一票
+#     导致"真正相关的长 chunk"与"仅扫到关键词的短 chunk"等价。
+#   - 新实现：标准 BM25 (k1=1.2, b=0.75)
+#       * tf：term frequency（header 匹配权重 ×3）
+#       * idf：log((N - df + 0.5) / (df + 0.5) + 1) — Robertson 变体
+#       * 长度归一化：用记忆总字符数 / 平均长度作为分母惩罚长记忆
+#     完全摆脱 break-once 限制，相关性按词频累计，长度合理惩罚。
 # ============================================================================
 
 find_relevant_memories() {
@@ -172,7 +180,7 @@ find_relevant_memories() {
     [ ${#keywords[@]} -eq 0 ] && return
 
     $PYTHON - "$MAX_INJECT_MEMORIES" "$index_file" "${keywords[@]}" <<'PY' 2>/dev/null
-import sys, re, math, os
+import sys, re, math
 from collections import defaultdict
 
 max_items = int(sys.argv[1])
@@ -184,10 +192,11 @@ if not keywords:
 
 header_re = re.compile(r'^=====\s+(\[global\]\s+)?(.+?)\s+/\s+(.+?)\s+=====$')
 
-header_scores = defaultdict(int)
-body_scores = defaultdict(int)
-chunk_counts = defaultdict(int)
-seen_chunks = set()
+# BM25 数据结构
+tf = defaultdict(lambda: defaultdict(int))     # tf[mem][kw] = 词频（header 命中 ×3）
+doc_freq = defaultdict(int)                     # df[kw] = 包含该 kw 的记忆数
+mem_length = defaultdict(int)                   # mem[mem] = 总字符数
+memory_names = set()
 current_mem = ''
 
 try:
@@ -198,32 +207,51 @@ try:
             m = header_re.match(line)
             if m:
                 current_mem = m.group(2).strip()
-                chunk_name = m.group(3).strip()
-                ck = (current_mem, chunk_name)
-                if ck not in seen_chunks:
-                    seen_chunks.add(ck)
-                    chunk_counts[current_mem] += 1
+                memory_names.add(current_mem)
+                # header 命中权重 ×3（多个 kw 可叠加，不同于旧版的 binary break）
                 for kw in keywords:
                     if kw in lower:
-                        header_scores[current_mem] += 3
-                        break
+                        tf[current_mem][kw] += 3
             elif current_mem and line:
+                # 正文：记录长度 + 词频计数
+                mem_length[current_mem] += len(line)
                 for kw in keywords:
                     if kw in lower:
-                        body_scores[current_mem] += 1
-                        break
+                        tf[current_mem][kw] += 1
 except Exception:
     sys.exit(0)
 
-entries = []
-for mem in set(list(header_scores.keys()) + list(body_scores.keys())):
-    raw = header_scores[mem] + body_scores[mem]
-    n = chunk_counts.get(mem, 1) or 1
-    norm = int(raw / math.sqrt(n)) if n > 0 else raw
-    entries.append((norm, mem))
+if not memory_names:
+    sys.exit(0)
 
-entries.sort(key=lambda x: x[0], reverse=True)
-for _, mem in entries[:max_items]:
+# IDF: 统计每个 kw 出现在多少记忆中
+N = len(memory_names)
+for kw in keywords:
+    df = sum(1 for mem in memory_names if tf[mem].get(kw, 0) > 0)
+    doc_freq[kw] = max(df, 1)  # 至少 1 避免 log(0)
+
+# BM25 评分
+k1, b = 1.2, 0.75
+avg_len = sum(mem_length.values()) / max(N, 1)
+
+scores = {}
+for mem in memory_names:
+    mem_len = mem_length.get(mem, 0) or 1
+    score = 0.0
+    for kw in keywords:
+        term_freq = tf[mem].get(kw, 0)
+        if term_freq == 0:
+            continue
+        df = doc_freq.get(kw, N)
+        # BM25 IDF (Robertson 变体，避免 IDF < 0)
+        idf = math.log((N - df + 0.5) / (df + 0.5) + 1.0)
+        # BM25 TF 长度归一化
+        tf_norm = term_freq * (k1 + 1) / (term_freq + k1 * (1 - b + b * mem_len / avg_len))
+        score += idf * tf_norm
+    scores[mem] = score
+
+sorted_mems = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+for mem, _ in sorted_mems[:max_items]:
     print(mem)
 PY
 }
