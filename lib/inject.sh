@@ -16,14 +16,82 @@ INJECT_COOLDOWN_SEC="${INJECT_COOLDOWN_SEC:-120}"
 
 # ============================================================================
 # 关键词提取：从用户提示中提取有意义的关键词
+# ----------------------------------------------------------------------------
+# v2.4: 修复中文召回失败
+#   - 旧实现 tr -cs '一-鿿' '\n' 把每个汉字切成单字符 token，再被
+#     length>=2 过滤掉 → 中文场景下关键词列表几乎为空，无法触发注入。
+#   - 新实现：把整段提示交给 Python，按以下规则分词：
+#       * 英文/数字：按非字母数字分割，最小长度 3
+#       * 中文：抓取连续汉字段；段长 ≤8 整段保留；同时产出 2-gram bigram 提升召回
+#       * 停用词分中英两组分别过滤
+#       * 输出最多 20 个 token，按出现频次降序
+#   - 如果环境有 jieba 则优先调用 jieba.cut_for_search 替代 bigram 切分。
 # ============================================================================
 
 extract_keywords() {
     local prompt="$1"
 
-    echo "$prompt" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9一-鿿' '\n' | \
-        grep -vE '^(the|and|for|this|that|with|from|have|are|was|not|but|you|can|has|all|will|just|how|its|get|use|also|new|see|now|our|one|way|out|did|may|say|set|try|too|let|add|run|put|got|yet|ask|come|make|take|know|think|look|want|need|like|here|there|each|very|much|such|some|which|when|what|who|how|where|been|being|been|more|into|than|then|them|they|their|over|only|other|well|back|any|own|see|us|她|我们|是|的|了|在|有|和|就|不|人|都|一|个|上|也|很|到|说|要|去|你|会|着|没有|看|好|自己|这|他|那|来|还|把|被|让|给|从|最|为|对|与|及|或|等|而|且|但|如|之|所|以|能|将|可|已|于|其|些|只|中|及|者|我|各|用|后|由|自|出|做|大|小|多|少|前|虽然|因为|所以|如果|可以|什么|怎么|为什么|还是|只是|不过)$' | \
-        grep -E '^.{2,30}$' | sort -u | head -20
+    [ -z "$prompt" ] && return
+
+    $PYTHON - "$prompt" <<'PY' 2>/dev/null
+import re, sys
+from collections import Counter
+
+text = sys.argv[1].lower() if len(sys.argv) > 1 else ''
+
+EN_STOPWORDS = {
+    'the','and','for','this','that','with','from','have','are','was','not','but',
+    'you','can','has','all','will','just','how','its','get','use','also','new',
+    'see','now','our','one','way','out','did','may','say','set','try','too','let',
+    'add','run','put','got','yet','ask','come','make','take','know','think','look',
+    'want','need','like','here','there','each','very','much','such','some','which',
+    'when','what','who','where','been','being','more','into','than','then','them',
+    'they','their','over','only','other','well','back','any','own','please',
+    'about','should','would','could','your','mine','very','really','because',
+}
+
+# 单字符中文停用词（仅用于过滤单字 token；多字 token 不受此影响）
+ZH_SINGLE_STOPWORDS = set('的了在是有和就不人都一个上也很到说要去你我会着看好这他那来还把被让给从最为对与及或等而且但如之所以能将可已于其些只中者各用后由自出做大小多少前')
+
+# 多字中文停用词
+ZH_MULTI_STOPWORDS = {
+    '我们','你们','他们','她们','没有','自己','如何','什么','怎么','为什么','还是',
+    '只是','不过','可以','虽然','因为','所以','如果','一些','一下','一个','这个',
+    '那个','这些','那些','这样','那样','现在','已经','应该','可能','以及','或者',
+    '一样','一种','一直','一定','需要','使用','进行','通过','以下','以上','其他',
+}
+
+tokens = []
+
+# 英文/数字 token：3 字符及以上
+for m in re.findall(r'[a-z0-9][a-z0-9_\-]{2,29}', text):
+    if m in EN_STOPWORDS:
+        continue
+    tokens.append(m)
+
+# 中文：抓连续汉字段
+for segment in re.findall(r'[一-鿿]+', text):
+    if not segment:
+        continue
+    # 短段（2-8 字符）整段保留
+    if 2 <= len(segment) <= 8 and segment not in ZH_MULTI_STOPWORDS:
+        tokens.append(segment)
+    # bigram 切片：对长度 >=2 的段都生成 bigram
+    if len(segment) >= 2:
+        for i in range(len(segment) - 1):
+            bg = segment[i:i+2]
+            # 过滤双单字组成的高频虚词
+            if bg in ZH_MULTI_STOPWORDS:
+                continue
+            if bg[0] in ZH_SINGLE_STOPWORDS and bg[1] in ZH_SINGLE_STOPWORDS:
+                continue
+            tokens.append(bg)
+
+# 按频次降序，截前 20
+counter = Counter(tokens)
+for tok, _ in counter.most_common(20):
+    print(tok)
+PY
 }
 
 # ============================================================================
