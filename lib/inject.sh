@@ -213,7 +213,15 @@ mark_injected() {
 
 # ============================================================================
 # 格式化记忆内容为注入文本
+# ----------------------------------------------------------------------------
+# v2.4: 跳过含 `[待AI补充` 的占位 chunk，避免把"待办标记"作为知识注入
 # ============================================================================
+
+# 判断一个 chunk 文件是否仍是占位（未经 AI 浓缩）
+is_placeholder_chunk() {
+    local chunk="$1"
+    grep -qF '[待AI补充' "$chunk" 2>/dev/null
+}
 
 format_injection() {
     local memory_name="$1"
@@ -231,11 +239,15 @@ format_injection() {
         done
     fi
 
-    # L3 关键内容
+    # L3 关键内容（跳过占位 chunk）
     if [ -d "$memory_path/chunks" ]; then
         local total_lines=0
+        local injected_any=false
         for chunk in "$memory_path/chunks"/*.md; do
             [ -f "$chunk" ] || continue
+            if is_placeholder_chunk "$chunk"; then
+                continue
+            fi
             local content=$(sed -n '/^---$/,/^---$/!p' "$chunk" | sed '/^---$/d' | head -30)
             local chunk_lines=$(echo "$content" | wc -l)
             total_lines=$((total_lines + chunk_lines))
@@ -246,7 +258,11 @@ format_injection() {
             echo "$content" | while read -r line; do
                 [ -n "$line" ] && echo "> $line"
             done
+            injected_any=true
         done
+        if [ "$injected_any" = false ]; then
+            echo "> *(L3 内容全部为占位，待 AI 浓缩；提示见 mcmDoctor)*"
+        fi
     fi
     echo "<!-- /mcMemory auto-inject -->"
 }
@@ -288,10 +304,13 @@ $summary_text
 
 "
 
-            # L3 内容
+            # L3 内容（跳过占位 chunk）
             if [ -d "$mem_dir/chunks" ]; then
                 for chunk in "$mem_dir/chunks"/*.md; do
                     [ -f "$chunk" ] || continue
+                    if is_placeholder_chunk "$chunk"; then
+                        continue
+                    fi
                     local content=$(sed -n '/^---$/,/^---$/!p' "$chunk" | sed '/^---$/d' | head -40)
                     output+="$content"$'\n'
                 done
