@@ -1,0 +1,6 @@
+
+# mcMemory PreCompact 临时会话笔记，不入库
+.claude/session_notes.md
+
+# 本地导出的会话记录，不入库
+conversation-*.txt

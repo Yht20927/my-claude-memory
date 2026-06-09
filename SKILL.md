@@ -26,7 +26,8 @@ allowed-tools: ["Bash", "Read", "Write", "Grep"]
 | `mcmImport <文件>` | 从归档导入记忆 | [commands/import.sh](commands/import.sh) |
 | `mcmRestore <条目>` | 从回收站恢复 | [commands/restore.sh](commands/restore.sh) |
 | `mcmEmptyTrash` | 清空回收站 | [commands/empty-trash.sh](commands/empty-trash.sh) |
-| `mcmAutoInject` | 一键开启/关闭自动注入 | [commands/auto-inject.sh](commands/auto-inject.sh) |
+| `mcmAutoInject` | 一键开启/关闭/暂停自动注入 | [commands/auto-inject.sh](commands/auto-inject.sh) |
+| `mcmInjectLog [--tail N]` | 查看自动注入事件日志 | [commands/inject-log.sh](commands/inject-log.sh) |
 | `mcmJournal <文本>` | 一行命令追加会话笔记（PreCompact 时归档为 L3 chunk） | [commands/journal.sh](commands/journal.sh) |
 | `mcmDoctor [--fix]` | 健康检查 + 自动迁移脏 tag 目录 + 占位 chunk 报告 | [commands/doctor.sh](commands/doctor.sh) |
 
@@ -53,6 +54,16 @@ mcmAutoInject on          # 当前项目启用
 mcmAutoInject on --scope user   # 全局启用
 mcmAutoInject status      # 查看状态
 mcmAutoInject off         # 关闭
+
+# 临时暂停（不改 settings.json，到点自动恢复）
+mcmAutoInject pause 30m   # 暂停 30 分钟
+mcmAutoInject pause 2h    # 暂停 2 小时
+mcmAutoInject resume      # 立即取消
+
+# 查看注入日志（哪些记忆在什么时间被注入、得分、关键词）
+mcmInjectLog              # 最近 20 条
+mcmInjectLog --tail 50
+mcmInjectLog --json
 ```
 
 注入策略:

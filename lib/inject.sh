@@ -1,18 +1,76 @@
 #!/bin/bash
 # ============================================================================
-# mcMemory-inject - 自动注入逻辑库 (v2.1)
+# mcMemory-inject - 自动注入逻辑库 (v2.4)
 # ============================================================================
 # 提供记忆自动注入所需的关键词提取、相关性匹配、上下文预算管理
+#
+# v2.4 新增:
+#   - is_inject_paused / pause 开关：用户可临时暂停注入（.paused_until）
+#   - log_injection：每次注入写一行到 .inject_log，供 mcmInjectLog 查看
 # ============================================================================
 
 # 注入追踪目录（避免重复注入）
 INJECT_STATE_DIR="${MEMORY_BASE:-$HOME/.claude/mcMemories}/.inject_state"
 mkdir -p "$INJECT_STATE_DIR"
 
+# pause 标记文件 + 日志文件
+INJECT_PAUSE_FILE="${MEMORY_BASE:-$HOME/.claude/mcMemories}/.paused_until"
+INJECT_LOG_FILE="${MEMORY_BASE:-$HOME/.claude/mcMemories}/.inject_log"
+
+# 日志最大行数（超过则截尾）
+INJECT_LOG_MAX_LINES="${INJECT_LOG_MAX_LINES:-1000}"
+
 # 配置
 MAX_INJECT_TOKENS_ESTIMATE="${MAX_INJECT_TOKENS_ESTIMATE:-2000}"
 MAX_INJECT_MEMORIES="${MAX_INJECT_MEMORIES:-3}"
 INJECT_COOLDOWN_SEC="${INJECT_COOLDOWN_SEC:-120}"
+
+# ----------------------------------------------------------------------------
+# pause 检查：若 .paused_until 存在且时间戳未过期，返回 0（已暂停）
+# ----------------------------------------------------------------------------
+is_inject_paused() {
+    [ -f "$INJECT_PAUSE_FILE" ] || return 1
+    local until_ts
+    until_ts=$(cat "$INJECT_PAUSE_FILE" 2>/dev/null)
+    [ -z "$until_ts" ] && return 1
+    local now
+    now=$(date +%s)
+    if [ "$now" -lt "$until_ts" ]; then
+        return 0   # 仍在暂停期
+    fi
+    # 已过期：清理掉 pause 文件
+    rm -f "$INJECT_PAUSE_FILE" 2>/dev/null
+    return 1
+}
+
+# ----------------------------------------------------------------------------
+# 写一行注入日志
+# 字段: ISO_TS | event | memory | score | keywords_csv
+# ----------------------------------------------------------------------------
+log_injection() {
+    local event="$1"          # session_start | prompt_submit | paused | skipped
+    local memory="${2:-}"
+    local score="${3:-}"
+    local keywords="${4:-}"
+
+    local ts
+    ts=$(date '+%Y-%m-%dT%H:%M:%S%z')
+    mkdir -p "$(dirname "$INJECT_LOG_FILE")"
+
+    # 追加 + 大小约束（O_APPEND 单行写在 Linux 上是原子的）
+    printf '%s|%s|%s|%s|%s\n' "$ts" "$event" "$memory" "$score" "$keywords" \
+        >> "$INJECT_LOG_FILE" 2>/dev/null || true
+
+    # 偶尔截尾（仅当文件远超阈值时；避免每次都跑 wc）
+    local size
+    size=$(stat -c '%s' "$INJECT_LOG_FILE" 2>/dev/null || echo 0)
+    if [ "$size" -gt 524288 ]; then  # >512KB 触发截尾
+        local tmp="${INJECT_LOG_FILE}.tmp.$$"
+        tail -n "$INJECT_LOG_MAX_LINES" "$INJECT_LOG_FILE" > "$tmp" 2>/dev/null \
+            && mv -f "$tmp" "$INJECT_LOG_FILE" \
+            || rm -f "$tmp"
+    fi
+}
 
 # ============================================================================
 # 关键词提取：从用户提示中提取有意义的关键词
@@ -258,6 +316,12 @@ session_start_inject() {
     local workspace="${1:-$(pwd)}"
     local output=""
 
+    # v2.4: pause 检查
+    if is_inject_paused; then
+        log_injection "paused" "" "" "session_start"
+        return
+    fi
+
     # 项目记忆 L1
     local project_dir=$(find_project_memory_dir "$workspace" 2>/dev/null)
     if [ -n "$project_dir" ] && [ -f "$project_dir/summary.md" ]; then
@@ -271,6 +335,7 @@ $summary_text
 
 "
         mark_injected "${project_name}_session"
+        log_injection "session_start" "$project_name" "" "project"
     fi
 
     # 全局 auto 记忆 L3（仅 auto 模式，这是设计意图）
@@ -303,6 +368,7 @@ $summary_text
 "
             # v2.1: 标记为已注入，防止 prompt_submit 重复加载
             mark_injected "$mem_tag"
+            log_injection "session_start" "$mem_name" "" "auto"
         done
     fi
 
@@ -315,6 +381,12 @@ $summary_text
 
 prompt_submit_inject() {
     local user_prompt="$1"
+
+    # v2.4: pause 检查
+    if is_inject_paused; then
+        log_injection "paused" "" "" "prompt_submit"
+        return
+    fi
 
     # 提取关键词
     local keywords=()
@@ -331,6 +403,10 @@ prompt_submit_inject() {
     done < <(find_relevant_memories "${keywords[@]}")
 
     [ ${#relevant[@]} -eq 0 ] && return
+
+    # 关键词 CSV（取前 8 个用于日志）
+    local kw_csv
+    kw_csv=$(IFS=','; echo "${keywords[*]:0:8}")
 
     # 格式化注入
     local output=""
@@ -368,6 +444,7 @@ prompt_submit_inject() {
 
         output+=$(format_injection "$mem" "$mem_path" "$score")
         mark_injected "$mem"
+        log_injection "prompt_submit" "$mem" "$score" "$kw_csv"
         injected=$((injected + 1))
     done
 

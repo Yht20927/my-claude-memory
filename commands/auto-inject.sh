@@ -1,8 +1,14 @@
 #!/bin/bash
 # ============================================================================
-# mcmAutoInject - 一键开启/关闭自动记忆注入 (v2.1)
+# mcmAutoInject - 一键开启/关闭/暂停自动记忆注入 (v2.4)
 # ============================================================================
-# Usage: mcmAutoInject [on|off|status] [--scope project|user]
+# Usage:
+#   mcmAutoInject [on|off|status] [--scope project|user]
+#   mcmAutoInject pause <duration>    # 临时暂停注入（不改 settings.json）
+#   mcmAutoInject resume              # 立即取消暂停
+#
+# duration 支持: 30m, 2h, 1d, 600s（不带单位 = 秒）
+# pause 通过 $MEMORY_BASE/.paused_until 时间戳文件实现，hook 启动时检测。
 # ============================================================================
 
 set -e
@@ -13,17 +19,97 @@ source "$SKILL_DIR/lib/core.sh"
 
 ACTION=""
 SCOPE="project"
+DURATION=""
 
 parse_args() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            on|off|status)  ACTION="$1"; shift ;;
+            on|off|status|pause|resume)
+                ACTION="$1"; shift
+                # pause 后面跟 duration
+                if [ "$ACTION" = "pause" ] && [ -n "$1" ] && [[ "$1" != --* ]]; then
+                    DURATION="$1"; shift
+                fi
+                ;;
             --scope)        SCOPE="$2"; shift 2 ;;
-            --help)         usage "用法: mcmAutoInject on|off|status [--scope project|user]" ;;
+            --help)         usage "用法: mcmAutoInject on|off|status|pause <dur>|resume [--scope project|user]" ;;
             *)              shift ;;
         esac
     done
     [ -z "$ACTION" ] && ACTION="status"
+    return 0   # set -e 下避免 [ -z ... ] 表达式整体返回 1 让函数退出
+}
+
+# ----------------------------------------------------------------------------
+# duration 解析：30m / 2h / 1d / 600s / 600（裸数字 = 秒）
+# 返回秒数
+# ----------------------------------------------------------------------------
+parse_duration_to_seconds() {
+    local d="$1"
+    [ -z "$d" ] && { echo 0; return; }
+    local num="${d%[smhd]}"
+    local unit="${d##*[0-9]}"
+    case "$unit" in
+        s|"") echo "$num" ;;
+        m)    echo $((num * 60)) ;;
+        h)    echo $((num * 3600)) ;;
+        d)    echo $((num * 86400)) ;;
+        *)    echo 0 ;;
+    esac
+}
+
+# ----------------------------------------------------------------------------
+# pause / resume：在 $MEMORY_BASE/.paused_until 写入"恢复时间戳"
+# ----------------------------------------------------------------------------
+PAUSE_FILE="${MEMORY_BASE:-$HOME/.claude/mcMemories}/.paused_until"
+
+do_pause() {
+    local dur="${DURATION:-30m}"
+    local seconds
+    seconds=$(parse_duration_to_seconds "$dur")
+    if [ "$seconds" -le 0 ]; then
+        error "无法解析时长: $dur (示例: 30m / 2h / 1d / 600s)"
+    fi
+    local until_ts=$(( $(date +%s) + seconds ))
+    mkdir -p "$(dirname "$PAUSE_FILE")"
+    echo "$until_ts" > "$PAUSE_FILE"
+    local until_str
+    until_str=$(date -d "@$until_ts" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "@$until_ts")
+    echo "已暂停自动注入 $dur"
+    echo "  恢复时间: $until_str"
+    echo "  立刻取消: mcmAutoInject resume"
+}
+
+do_resume() {
+    if [ -f "$PAUSE_FILE" ]; then
+        rm -f "$PAUSE_FILE"
+        echo "已取消自动注入暂停"
+    else
+        echo "当前未处于暂停状态"
+    fi
+}
+
+# 在 status 中显示 pause 状态
+show_pause_status() {
+    if [ ! -f "$PAUSE_FILE" ]; then
+        return
+    fi
+    local until_ts
+    until_ts=$(cat "$PAUSE_FILE" 2>/dev/null)
+    [ -z "$until_ts" ] && return
+    local now
+    now=$(date +%s)
+    if [ "$now" -ge "$until_ts" ]; then
+        echo "  ⚠ pause 时间已过期（hook 下次启动将自动清理）"
+        return
+    fi
+    local remain=$((until_ts - now))
+    local until_str
+    until_str=$(date -d "@$until_ts" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "@$until_ts")
+    echo ""
+    echo "⏸  注入已暂停"
+    echo "    恢复时间: $until_str (还剩 ${remain}s)"
+    echo "    立刻取消: mcmAutoInject resume"
 }
 
 # ----------------------------------------------------------------------------
@@ -226,13 +312,17 @@ show_status() {
     echo ""
     echo "---"
     echo "操作:"
-    echo "  mcmAutoInject on      开启自动注入"
-    echo "  mcmAutoInject off     关闭自动注入"
-    echo "  mcmAutoInject status  查看状态"
+    echo "  mcmAutoInject on             开启自动注入"
+    echo "  mcmAutoInject off            关闭自动注入"
+    echo "  mcmAutoInject status         查看状态"
+    echo "  mcmAutoInject pause <dur>    临时暂停 (30m / 2h / 1d)"
+    echo "  mcmAutoInject resume         立即取消暂停"
     echo ""
     echo "作用域:"
     echo "  --scope project  当前项目（默认）"
     echo "  --scope user     全局用户"
+
+    show_pause_status
 }
 
 # ----------------------------------------------------------------------------
@@ -268,6 +358,14 @@ main() {
 
         status)
             show_status
+            ;;
+
+        pause)
+            do_pause
+            ;;
+
+        resume)
+            do_resume
             ;;
     esac
 }
