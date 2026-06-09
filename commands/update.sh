@@ -79,8 +79,11 @@ step2_update() {
 
     # 标签变更: 移动目录到新标签分组
     if [ -n "$NEW_TAGS" ] && [ "$NEW_TAGS" != "$(get_current_tag "$memory_path")" ]; then
-        # 取第一个标签作为分组
-        local primary_tag=$(echo "$NEW_TAGS" | cut -d',' -f1 | xargs)
+        # 取主标签作为物理目录分组（拒绝含逗号/特殊字符的整串）
+        local default_tag="tools"
+        [ "$IS_GLOBAL" = true ] && default_tag="auto"
+        local primary_tag
+        primary_tag=$(parse_primary_tag "$NEW_TAGS" "$default_tag")
         local parent_dir
         if [ "$IS_GLOBAL" = true ]; then
             parent_dir="$GLOBAL_DIR/$primary_tag"

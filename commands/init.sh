@@ -276,6 +276,17 @@ main() {
 
     log "开始初始化记忆: $MEMORY_NAME (tags: $TAGS, global: $IS_GLOBAL)"
 
+    # 拆分主标签：仅第一个标签作为物理目录，其余写入 summary.md
+    # 这样既避免 "tag1,tag2,tag3" 整串变成目录名（污染 get_project_tags），
+    # 又保留多标签语义供 L2 索引和 summary 使用。
+    local default_tag="tools"
+    [ "$IS_GLOBAL" = true ] && default_tag="auto"
+    local primary_tag
+    primary_tag=$(parse_primary_tag "$TAGS" "$default_tag")
+    if [ "$primary_tag" != "$TAGS" ]; then
+        log "  主标签: $primary_tag（完整 tags: $TAGS 写入 summary.md）"
+    fi
+
     # 并发锁
     local lock_name="init_${MEMORY_NAME}"
     local lock_token=$(acquire_lock "$lock_name")
@@ -287,16 +298,16 @@ main() {
         [ -n "$file" ] && source_files+=("$file")
     done < <(step1_deep_read)
 
-    # 创建目录结构
+    # 创建目录结构（使用主标签）
     local memory_path
     if [ "$IS_GLOBAL" = true ]; then
-        memory_path=$(create_global_structure "$TAGS" "$MEMORY_NAME")
+        memory_path=$(create_global_structure "$primary_tag" "$MEMORY_NAME")
     else
-        memory_path=$(create_project_structure "$TAGS" "$MEMORY_NAME")
+        memory_path=$(create_project_structure "$primary_tag" "$MEMORY_NAME")
     fi
     log "  Created memory structure: $memory_path"
 
-    # 创建 summary.md
+    # 创建 summary.md（写入完整 tags 字符串，便于多 tag 检索）
     generate_summary_md "$MEMORY_NAME" "$DESCRIPTION" "$TAGS" > "$memory_path/summary.md"
 
     if [ ${#source_files[@]} -gt 0 ]; then
@@ -329,11 +340,11 @@ CHUNK_EOF
         log "  Created minimal chunk: $chunk_path"
     fi
 
-    # 更新全局索引
+    # 更新全局索引（注意：传主标签而非原始 TAGS）
     if [ "$IS_GLOBAL" = false ]; then
-        update_global_index "project" "$TAGS" "$MEMORY_NAME" "$memory_path" "add"
+        update_global_index "project" "$primary_tag" "$MEMORY_NAME" "$memory_path" "add"
     else
-        update_global_index "global" "$TAGS" "$MEMORY_NAME" "$memory_path" "add"
+        update_global_index "global" "$primary_tag" "$MEMORY_NAME" "$memory_path" "add"
     fi
 
     # 增量更新搜索索引
