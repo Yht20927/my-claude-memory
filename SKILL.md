@@ -27,6 +27,8 @@ allowed-tools: ["Bash", "Read", "Write", "Grep"]
 | `mcmRestore <条目>` | 从回收站恢复 | [commands/restore.sh](commands/restore.sh) |
 | `mcmEmptyTrash` | 清空回收站 | [commands/empty-trash.sh](commands/empty-trash.sh) |
 | `mcmAutoInject` | 一键开启/关闭自动注入 | [commands/auto-inject.sh](commands/auto-inject.sh) |
+| `mcmJournal <文本>` | 一行命令追加会话笔记（PreCompact 时归档为 L3 chunk） | [commands/journal.sh](commands/journal.sh) |
+| `mcmDoctor [--fix]` | 健康检查 + 自动迁移脏 tag 目录 + 占位 chunk 报告 | [commands/doctor.sh](commands/doctor.sh) |
 
 ## 公共参数
 
@@ -130,7 +132,7 @@ mcmAutoInject off         # 关闭
 
 ## 会话笔记（PreCompact 保存）
 
-> **重要**: 在会话过程中，当出现以下情况时，Claude 应**主动写入** `.claude/session_notes.md`：
+> **重要**: 在会话过程中，当出现以下情况时，Claude 应**主动**追加到 `.claude/session_notes.md`：
 
 触发写入的场景:
 - 做出了重要的架构或设计决策
@@ -139,7 +141,15 @@ mcmAutoInject off         # 关闭
 - 用户明确表示"记住这个"
 - 在回答复杂问题前搜集了有价值的上下文
 
-写入格式（Markdown）:
+**推荐方式（v2.4+）**: 使用 `mcmJournal` 一行命令，免去 Write 工具的门槛：
+```bash
+mcmJournal "决策: 用 BM25 替换 sqrt(n) 归一化；原因: 后者无理论依据"
+mcmJournal "Bug fix: prompt_submit_inject 永不注入；根因: score 二次过滤"
+echo -e "决策 A\n决策 B" | mcmJournal --stdin    # 多行
+mcmJournal --show                                  # 查看当前笔记
+```
+
+或直接 Write `.claude/session_notes.md` 添加结构化条目：
 ```markdown
 ## <简短标题>
 
