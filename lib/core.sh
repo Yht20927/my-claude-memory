@@ -898,9 +898,26 @@ empty_trash() {
 
 # ============================================================================
 # 搜索索引管理
+# ----------------------------------------------------------------------------
+# v2.4: 原子写入策略
+#   - 所有"整体重写"路径（rebuild / remove / update）走"写临时文件 +
+#     mv 原子 rename"，读端永远看到完整的旧版或完整的新版，不会读到
+#     half-written 状态。
+#   - append_to_search_index 仍用 >> 追加。POSIX 规定 < PIPE_BUF (4096)
+#     的写入原子；单 chunk 几 KB 在主流文件系统上也是单次 write(2)，
+#     读端最多看到"少了几个新 chunk"而不是 corrupt。
 # ============================================================================
 
-# 从搜索索引中移除指定记忆的所有 sections
+# 把整个文本原子写入 $SEARCH_INDEX：写到同目录 .tmp 再 mv，避免读端撞上 half-write
+_atomic_write_index() {
+    local content="$1"
+    local tmp="${SEARCH_INDEX}.tmp.$$"
+    mkdir -p "$(dirname "$SEARCH_INDEX")"
+    printf '%s' "$content" > "$tmp"
+    mv -f "$tmp" "$SEARCH_INDEX"
+}
+
+# 从搜索索引中移除指定记忆的所有 sections（原子重写）
 remove_from_search_index() {
     local memory_name="$1"
     local is_global="$2"
@@ -912,36 +929,35 @@ remove_from_search_index() {
     local prefix="===== $memory_name /"
     [ "$is_global" = true ] && prefix="===== [global] $memory_name /"
 
+    local tmp="${SEARCH_INDEX}.tmp.$$"
     $PYTHON -c "
 import sys
-memory_name = sys.argv[1]
-prefix = sys.argv[2]
-index_file = sys.argv[3]
+prefix = sys.argv[1]
+src = sys.argv[2]
+dst = sys.argv[3]
 
 try:
-    with open(index_file, 'r') as f:
+    with open(src, 'r', errors='replace') as f:
         lines = f.readlines()
-
     kept = []
     skip = False
     for line in lines:
         if line.startswith('===== '):
-            # 新的 section 开始
-            if line.startswith(prefix):
-                skip = True
-            else:
-                skip = False
+            skip = line.startswith(prefix)
         if not skip:
             kept.append(line)
-
-    with open(index_file, 'w') as f:
+    with open(dst, 'w') as f:
         f.writelines(kept)
-except:
-    pass
-" "$memory_name" "$prefix" "$SEARCH_INDEX" 2>/dev/null
+except Exception:
+    sys.exit(1)
+" "$prefix" "$SEARCH_INDEX" "$tmp" 2>/dev/null \
+        && mv -f "$tmp" "$SEARCH_INDEX" \
+        || rm -f "$tmp"
 }
 
 # 将单个记忆的 chunks 追加到搜索索引末尾
+# 注意：保持 append 语义以避免每次 sync 都全文重写大索引。
+# 单 chunk 追加在常见文件系统上 write(2) 通常原子；读端最多看到"少几个 chunk"。
 append_to_search_index() {
     local memory_path="$1"
     local is_global="$2"
@@ -956,13 +972,25 @@ append_to_search_index() {
     local prefix="===== $memory_name /"
     [ "$is_global" = true ] && prefix="===== [global] $memory_name /"
 
+    mkdir -p "$(dirname "$SEARCH_INDEX")"
+
+    # 收集所有 chunk 内容到临时文件，再一次性 cat >> 索引
+    # （单 chunk 追加多次仍可能被并发读端撕裂；先合并后单次 append 缩小窗口）
+    local buf="${SEARCH_INDEX}.append.$$"
+    : > "$buf"
     for chunk in "$chunks_dir"/*.md; do
         [ -f "$chunk" ] || continue
         local chunk_name=$(basename "$chunk")
-        echo "$prefix $chunk_name =====" >> "$SEARCH_INDEX"
-        cat "$chunk" >> "$SEARCH_INDEX"
-        echo "" >> "$SEARCH_INDEX"
+        {
+            echo "$prefix $chunk_name ====="
+            cat "$chunk"
+            echo ""
+        } >> "$buf"
     done
+    if [ -s "$buf" ]; then
+        cat "$buf" >> "$SEARCH_INDEX"
+    fi
+    rm -f "$buf"
 }
 
 # 增量更新搜索索引（移除旧 sections + 追加新内容）
@@ -976,17 +1004,20 @@ update_search_index() {
 }
 
 # 全量重建搜索索引（fallback，session-start 使用）
+# v2.4: 写临时文件 + mv，避免读端撞上 half-written
 rebuild_search_index() {
     log "Rebuilding search index..."
-    > "$SEARCH_INDEX"
+    mkdir -p "$(dirname "$SEARCH_INDEX")"
+    local tmp="${SEARCH_INDEX}.tmp.$$"
+    : > "$tmp"
 
     if [ -d "$PROJECTS_DIR" ]; then
         while IFS= read -r -d '' chunk; do
             local project_name=$(basename "$(dirname "$(dirname "$chunk")")")
             local chunk_name=$(basename "$chunk")
-            echo "===== $project_name / $chunk_name =====" >> "$SEARCH_INDEX"
-            cat "$chunk" >> "$SEARCH_INDEX"
-            echo "" >> "$SEARCH_INDEX"
+            echo "===== $project_name / $chunk_name =====" >> "$tmp"
+            cat "$chunk" >> "$tmp"
+            echo "" >> "$tmp"
         done < <(find "$PROJECTS_DIR" -name "*.md" -path "*/chunks/*" -print0 2>/dev/null)
     fi
 
@@ -994,12 +1025,13 @@ rebuild_search_index() {
         while IFS= read -r -d '' chunk; do
             local memory_name=$(basename "$(dirname "$(dirname "$chunk")")")
             local chunk_name=$(basename "$chunk")
-            echo "===== [global] $memory_name / $chunk_name =====" >> "$SEARCH_INDEX"
-            cat "$chunk" >> "$SEARCH_INDEX"
-            echo "" >> "$SEARCH_INDEX"
+            echo "===== [global] $memory_name / $chunk_name =====" >> "$tmp"
+            cat "$chunk" >> "$tmp"
+            echo "" >> "$tmp"
         done < <(find "$GLOBAL_DIR" -name "*.md" -path "*/chunks/*" -print0 2>/dev/null)
     fi
 
+    mv -f "$tmp" "$SEARCH_INDEX"
     log "Search index rebuilt: $(wc -l < "$SEARCH_INDEX" 2>/dev/null || echo 0) lines"
 }
 
