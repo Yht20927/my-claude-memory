@@ -240,7 +240,7 @@ main() {
     local mem_name=$(basename "$memory_dir")
     lock_name="sync_${mem_name}"
     lock_token=$(acquire_lock "$lock_name")
-    trap "release_lock '$lock_name' '$lock_token'" EXIT
+    mcm_on_exit "release_lock '$lock_name' '$lock_token'"
 
     log "开始增量同步: $mem_name"
 
@@ -254,7 +254,7 @@ main() {
     if [ ${#changed_files[@]} -eq 0 ]; then
         log "同步完成 - 无变化"
         release_lock "$lock_name" "$lock_token"
-        trap - EXIT
+        mcm_clear_exit_handlers
         return
     fi
 
@@ -265,9 +265,9 @@ main() {
     update_search_index "$mem_name" "$memory_dir" "$IS_GLOBAL"
 
     release_lock "$lock_name" "$lock_token"
-    trap - EXIT
+    mcm_clear_exit_handlers
 
     log "增量同步完成，更新了 ${#changed_files[@]} 个文件"
 }
 
-main "$@"
+mcm_run_command main "$@"

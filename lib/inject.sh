@@ -13,12 +13,8 @@
 INJECT_STATE_DIR="${MEMORY_BASE:-$HOME/.claude/mcMemories}/.inject_state"
 mkdir -p "$INJECT_STATE_DIR"
 
-# pause 标记文件 + 日志文件
+# pause 标记文件
 INJECT_PAUSE_FILE="${MEMORY_BASE:-$HOME/.claude/mcMemories}/.paused_until"
-INJECT_LOG_FILE="${MEMORY_BASE:-$HOME/.claude/mcMemories}/.inject_log"
-
-# 日志最大行数（超过则截尾）
-INJECT_LOG_MAX_LINES="${INJECT_LOG_MAX_LINES:-1000}"
 
 # 配置
 MAX_INJECT_TOKENS_ESTIMATE="${MAX_INJECT_TOKENS_ESTIMATE:-2000}"
@@ -44,32 +40,11 @@ is_inject_paused() {
 }
 
 # ----------------------------------------------------------------------------
-# 写一行注入日志
-# 字段: ISO_TS | event | memory | score | keywords_csv
+# 写一行注入日志（v3.0 改为事件总线薄壳；旧 .inject_log 文件下线）
+# event: session_start | prompt_submit | paused
 # ----------------------------------------------------------------------------
 log_injection() {
-    local event="$1"          # session_start | prompt_submit | paused | skipped
-    local memory="${2:-}"
-    local score="${3:-}"
-    local keywords="${4:-}"
-
-    local ts
-    ts=$(date '+%Y-%m-%dT%H:%M:%S%z')
-    mkdir -p "$(dirname "$INJECT_LOG_FILE")"
-
-    # 追加 + 大小约束（O_APPEND 单行写在 Linux 上是原子的）
-    printf '%s|%s|%s|%s|%s\n' "$ts" "$event" "$memory" "$score" "$keywords" \
-        >> "$INJECT_LOG_FILE" 2>/dev/null || true
-
-    # 偶尔截尾（仅当文件远超阈值时；避免每次都跑 wc）
-    local size
-    size=$(stat -c '%s' "$INJECT_LOG_FILE" 2>/dev/null || echo 0)
-    if [ "$size" -gt 524288 ]; then  # >512KB 触发截尾
-        local tmp="${INJECT_LOG_FILE}.tmp.$$"
-        tail -n "$INJECT_LOG_MAX_LINES" "$INJECT_LOG_FILE" > "$tmp" 2>/dev/null \
-            && mv -f "$tmp" "$INJECT_LOG_FILE" \
-            || rm -f "$tmp"
-    fi
+    emit_event "inject.${1}" memory="${2:-}" score="${3:-}" keywords="${4:-}"
 }
 
 # ============================================================================

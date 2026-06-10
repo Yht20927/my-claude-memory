@@ -119,7 +119,7 @@ main() {
 
     local lock_name="delete_${NAME}"
     local lock_token=$(acquire_lock "$lock_name")
-    trap "release_lock '$lock_name' '$lock_token'" EXIT
+    mcm_on_exit "release_lock '$lock_name' '$lock_token'"
 
     step1_confirm "$memory_path" || { log "取消删除"; exit 1; }
     step2_delete "$memory_path"
@@ -129,9 +129,9 @@ main() {
     remove_from_search_index "$NAME" "$IS_GLOBAL"
 
     release_lock "$lock_name" "$lock_token"
-    trap - EXIT
+    mcm_clear_exit_handlers
 
     log "已移至回收站: $NAME (使用 mcmRestore 恢复, mcmEmptyTrash 清空)"
 }
 
-main "$@"
+mcm_run_command main "$@"

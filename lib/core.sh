@@ -23,6 +23,11 @@ TRASH_DIR="$MEMORY_BASE/.trash"
 LOCK_DIR_BASE="$MEMORY_BASE/.locks"
 SEARCH_INDEX="$MEMORY_BASE/.search_index"
 
+# 事件总线（v3.0 Phase 0 / A4-min）
+MCM_EVENTS_FILE="${MCM_EVENTS_FILE:-$MEMORY_BASE/.events.ndjson}"
+MCM_EVENTS_MAX_BYTES="${MCM_EVENTS_MAX_BYTES:-1048576}"   # 1MB
+MCM_EVENTS_TAIL_LINES="${MCM_EVENTS_TAIL_LINES:-2000}"
+
 # 大文件拆分阈值（行数）
 CHUNK_SPLIT_THRESHOLD="${CHUNK_SPLIT_THRESHOLD:-200}"
 
@@ -1036,3 +1041,10 @@ rebuild_search_index() {
 }
 
 # search_index removed (dead code — search.sh and inject.sh read $SEARCH_INDEX directly)
+
+# ============================================================================
+# 事件总线（v3.0 Phase 0）
+# ============================================================================
+# events.sh 提供 emit_event / mcm_on_exit / mcm_run_command；依赖 core.sh
+# 中的 MCM_EVENTS_* 配置，所以必须在配置块之后 source。
+source "$(dirname "${BASH_SOURCE[0]}")/events.sh"

@@ -1,7 +1,11 @@
 #!/bin/bash
 # ============================================================================
-# mcmInjectLog - 查看自动注入日志 (v2.4)
+# mcmInjectLog - 查看自动注入日志 (v3.0)
 # ----------------------------------------------------------------------------
+# v3.0 数据源切换:
+#   旧版从 .inject_log（管道分隔）读取；v3.0 改为从 .events.ndjson 过滤
+#   type=inject.* 事件。CLI 接口与 JSON schema 完全保持兼容。
+#
 # 设计动机:
 #   原本 hook 注入对用户完全不可见——用户不知道"为什么这次 Claude 突然提到了
 #   某个旧记忆"。本命令显示最近若干次注入事件（哪个记忆、什么得分、什么关键词
@@ -11,7 +15,7 @@
 #   mcmInjectLog                  # 默认 tail 20
 #   mcmInjectLog --tail 50        # 看最近 50 条
 #   mcmInjectLog --tail 0         # 全部
-#   mcmInjectLog --clear          # 清空日志
+#   mcmInjectLog --clear          # 清空 inject.* 事件（其他事件保留）
 #   mcmInjectLog --json           # JSON 输出
 # ============================================================================
 
@@ -20,7 +24,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LIB_DIR="$(dirname "$SCRIPT_DIR")/lib"
 source "$LIB_DIR/core.sh"
-source "$LIB_DIR/inject.sh"   # 引入 INJECT_LOG_FILE / INJECT_PAUSE_FILE
+source "$LIB_DIR/inject.sh"   # 引入 INJECT_PAUSE_FILE
 
 TAIL_N=20
 ACTION="show"
@@ -40,11 +44,10 @@ parse_args() {
 
 选项:
   --tail N    显示最近 N 条（0 = 全部），默认 20
-  --clear     清空日志
+  --clear     清空 inject.* 事件（事件总线中其他事件保留）
   --json      JSON 输出
 
-日志格式（管道分隔）：
-  时间 | 事件 | 记忆名 | 得分 | 关键词
+数据源: $MCM_EVENTS_FILE（type=inject.* 的事件）
 
 事件类型:
   session_start  - SessionStart hook 加载项目记忆/auto 记忆
@@ -58,8 +61,50 @@ EOF
     done
 }
 
+# 把 .events.ndjson 里的 inject.* 事件抽出来，映射回 v2.x 5 字段格式
+# 输出到 stdout：每行 5 字段，制表符分隔，便于后续渲染
+_extract_inject_records() {
+    [ -f "$MCM_EVENTS_FILE" ] || return 0
+    $PYTHON -c '
+import json, sys
+for raw in sys.stdin:
+    raw = raw.strip()
+    if not raw:
+        continue
+    try:
+        obj = json.loads(raw)
+    except Exception:
+        continue
+    t = obj.get("type", "")
+    if not t.startswith("inject."):
+        continue
+    event = t[len("inject."):]
+    # 制表符分隔（inject.* 字段不含 \t，安全）
+    print("\t".join([
+        obj.get("ts", ""),
+        event,
+        obj.get("memory", ""),
+        obj.get("score", ""),
+        obj.get("keywords", ""),
+    ]))
+' < "$MCM_EVENTS_FILE"
+}
+
 show_log() {
-    if [ ! -f "$INJECT_LOG_FILE" ] || [ ! -s "$INJECT_LOG_FILE" ]; then
+    local records
+    records=$(_extract_inject_records)
+
+    # 应用 tail
+    local lines
+    if [ -z "$records" ]; then
+        lines=""
+    elif [ "$TAIL_N" = "0" ]; then
+        lines="$records"
+    else
+        lines=$(echo "$records" | tail -n "$TAIL_N")
+    fi
+
+    if [ -z "$lines" ]; then
         if [ "$JSON" = true ]; then
             echo "[]"
         else
@@ -71,42 +116,35 @@ show_log() {
         return
     fi
 
-    local lines
-    if [ "$TAIL_N" = "0" ]; then
-        lines=$(cat "$INJECT_LOG_FILE")
-    else
-        lines=$(tail -n "$TAIL_N" "$INJECT_LOG_FILE")
-    fi
-
     if [ "$JSON" = true ]; then
-        $PYTHON -c "
+        $PYTHON -c '
 import json, sys
 out = []
 for raw in sys.stdin:
-    raw = raw.rstrip('\n')
+    raw = raw.rstrip("\n")
     if not raw:
         continue
-    parts = raw.split('|', 4)
+    parts = raw.split("\t", 4)
     while len(parts) < 5:
-        parts.append('')
+        parts.append("")
     out.append({
-        'ts': parts[0],
-        'event': parts[1],
-        'memory': parts[2],
-        'score': parts[3],
-        'keywords': parts[4],
+        "ts": parts[0],
+        "event": parts[1],
+        "memory": parts[2],
+        "score": parts[3],
+        "keywords": parts[4],
     })
 print(json.dumps(out, indent=2, ensure_ascii=False))
-" <<< "$lines"
+' <<< "$lines"
         return
     fi
 
     # 文本输出：对齐为表格
-    echo "## 自动注入日志（最近 $TAIL_N 条，文件: $INJECT_LOG_FILE）"
+    echo "## 自动注入日志（最近 $TAIL_N 条，数据源: $MCM_EVENTS_FILE）"
     echo ""
     printf '%-25s %-15s %-25s %-6s %s\n' "时间" "事件" "记忆" "得分" "关键词"
     printf '%-25s %-15s %-25s %-6s %s\n' "----" "----" "----" "----" "----"
-    echo "$lines" | while IFS='|' read -r ts event memory score keywords; do
+    echo "$lines" | while IFS=$'\t' read -r ts event memory score keywords; do
         [ -z "$ts" ] && continue
         printf '%-25s %-15s %-25s %-6s %s\n' \
             "$ts" "$event" "${memory:--}" "${score:--}" "${keywords:--}"
@@ -127,13 +165,38 @@ print(json.dumps(out, indent=2, ensure_ascii=False))
     fi
 }
 
+# 清空仅 inject.* 事件（不动 cmd.* / hook.* 等）
+# Python 原子重写 .events.ndjson
 clear_log() {
-    if [ -f "$INJECT_LOG_FILE" ]; then
-        : > "$INJECT_LOG_FILE"
-        echo "已清空 $INJECT_LOG_FILE"
-    else
-        echo "日志文件不存在: $INJECT_LOG_FILE"
+    if [ ! -f "$MCM_EVENTS_FILE" ]; then
+        echo "事件文件不存在: $MCM_EVENTS_FILE"
+        return
     fi
+
+    local before after
+    before=$(grep -c '"type":"inject\.' "$MCM_EVENTS_FILE" 2>/dev/null || true)
+    [ -z "$before" ] && before=0
+
+    local tmp="${MCM_EVENTS_FILE}.tmp.$$"
+    $PYTHON -c '
+import json, sys
+for raw in sys.stdin:
+    raw = raw.rstrip("\n")
+    if not raw:
+        continue
+    try:
+        obj = json.loads(raw)
+        if obj.get("type", "").startswith("inject."):
+            continue
+    except Exception:
+        # 解析失败的行保留（不丢数据）
+        pass
+    print(raw)
+' < "$MCM_EVENTS_FILE" > "$tmp" && mv -f "$tmp" "$MCM_EVENTS_FILE" || { rm -f "$tmp"; error "清空失败"; }
+
+    after=$(grep -c '"type":"inject\.' "$MCM_EVENTS_FILE" 2>/dev/null || true)
+    [ -z "$after" ] && after=0
+    echo "已清空 inject.* 事件: ${before} → ${after}（其他事件保留）"
 }
 
 main() {
@@ -144,4 +207,4 @@ main() {
     esac
 }
 
-main "$@"
+mcm_run_command main "$@"

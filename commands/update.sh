@@ -223,7 +223,7 @@ main() {
 
     local lock_name="update_${NAME}"
     local lock_token=$(acquire_lock "$lock_name")
-    trap "release_lock '$lock_name' '$lock_token'" EXIT
+    mcm_on_exit "release_lock '$lock_name' '$lock_token'"
 
     local new_path=$(step2_update "$memory_path")
     step3_sync_index "$NAME" "$NEW_NAME" "$new_path"
@@ -238,9 +238,9 @@ main() {
     fi
 
     release_lock "$lock_name" "$lock_token"
-    trap - EXIT
+    mcm_clear_exit_handlers
 
     log "更新完成"
 }
 
-main "$@"
+mcm_run_command main "$@"

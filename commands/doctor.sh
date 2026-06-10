@@ -197,7 +197,7 @@ print(json.dumps(data, indent=2, ensure_ascii=False))
             echo "执行迁移..."
             local lock_token
             lock_token=$(acquire_lock "doctor")
-            trap "release_lock 'doctor' '$lock_token'" EXIT
+            mcm_on_exit "release_lock 'doctor' '$lock_token'"
             for t in "${dirty_project_tags[@]}"; do
                 migrate_dirty_tag "$PROJECTS_DIR" "$t" "project"
             done
@@ -205,7 +205,7 @@ print(json.dumps(data, indent=2, ensure_ascii=False))
                 migrate_dirty_tag "$GLOBAL_DIR" "$t" "global"
             done
             release_lock "doctor" "$lock_token"
-            trap - EXIT
+            mcm_clear_exit_handlers
 
             # 迁移完成后重建搜索索引
             rebuild_search_index
@@ -230,4 +230,4 @@ print(json.dumps(data, indent=2, ensure_ascii=False))
     fi
 }
 
-main "$@"
+mcm_run_command main "$@"

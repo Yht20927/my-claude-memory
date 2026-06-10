@@ -106,4 +106,4 @@ main() {
     log "导入成功: $memory_name → $dest_dir"
 }
 
-main "$@"
+mcm_run_command main "$@"

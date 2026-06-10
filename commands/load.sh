@@ -147,4 +147,4 @@ main() {
     log "加载完成: $NAME (layer: $LAYER)"
 }
 
-main "$@"
+mcm_run_command main "$@"

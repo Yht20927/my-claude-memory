@@ -204,4 +204,4 @@ main() {
     log "搜索完成，找到 ${#matched_chunks[@]} 个匹配"
 }
 
-main "$@"
+mcm_run_command main "$@"

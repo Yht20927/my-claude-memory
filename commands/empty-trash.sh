@@ -55,4 +55,4 @@ main() {
     echo "回收站已清空 ($count 个条目被永久删除)"
 }
 
-main "$@"
+mcm_run_command main "$@"

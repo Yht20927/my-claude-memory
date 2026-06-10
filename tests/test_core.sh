@@ -567,6 +567,207 @@ NOTES_EOF
 }
 
 # ----------------------------------------------------------------------------
+# 测试: emit_event 基础（v3.0 / A4-min）
+# ----------------------------------------------------------------------------
+test_emit_event_basic() {
+    echo "=== 测试: emit_event (基础写入) ==="
+    setup
+    export MCM_EVENTS_FILE="$MEMORY_BASE/.events.ndjson"
+
+    emit_event cmd.start cmd=mcmTest
+    emit_event inject.prompt_submit memory="my-mem" score="2.34" keywords="a,b,c"
+
+    assert_true "$([ -f "$MCM_EVENTS_FILE" ] && echo 0 || echo 1)" \
+        ".events.ndjson 已创建"
+
+    # 行数 = 2
+    local line_count
+    line_count=$(wc -l < "$MCM_EVENTS_FILE" | tr -d ' ')
+    assert_equal "2" "$line_count" "写入两行"
+
+    # 每行可被 Python json.loads 解析，字段齐全
+    local parse_ok
+    parse_ok=$($PYTHON -c "
+import json
+ok = True
+fields = []
+for line in open('$MCM_EVENTS_FILE'):
+    obj = json.loads(line)
+    fields.append((obj.get('type'), 'ts' in obj))
+print('|'.join('%s,%s' % (t, str(h)) for t,h in fields))
+")
+    assert_contains "cmd.start,True" "$parse_ok" "首行 type=cmd.start 含 ts"
+    assert_contains "inject.prompt_submit,True" "$parse_ok" "次行 type=inject.prompt_submit 含 ts"
+
+    teardown
+}
+
+# ----------------------------------------------------------------------------
+# 测试: emit_event 截尾
+# ----------------------------------------------------------------------------
+test_emit_event_truncation() {
+    echo "=== 测试: emit_event (大文件截尾) ==="
+    setup
+    export MCM_EVENTS_FILE="$MEMORY_BASE/.events.ndjson"
+    # 把阈值调低以便快速触发
+    export MCM_EVENTS_MAX_BYTES=4096
+    export MCM_EVENTS_TAIL_LINES=10
+
+    # 写 200 条，每条 ~100 字节 → 总 ~20KB，远超 4KB 阈值
+    local i
+    for i in $(seq 1 200); do
+        emit_event cmd.test seq="$i" pad="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    done
+
+    local line_count
+    line_count=$(wc -l < "$MCM_EVENTS_FILE" | tr -d ' ')
+    # 截尾是 lazy 的（每超阈值才触发一次 tail），所以行数 ≤ TAIL_LINES + 一个截尾窗口
+    # 真值范围：[10, 截尾后再写的最大行数]。我们断言 < 200（远小于不截尾的 200）即可
+    assert_true "$([ "$line_count" -lt 200 ] && [ "$line_count" -ge 10 ] && echo 0 || echo 1)" \
+        "截尾生效：行数 $line_count 在 [10,200) 之间（不截尾应是 200）"
+
+    # 最后一行的 seq 应该是 200
+    local last_seq
+    last_seq=$($PYTHON -c "
+import json
+last = list(open('$MCM_EVENTS_FILE'))[-1]
+print(json.loads(last).get('seq'))
+")
+    assert_equal "200" "$last_seq" "最后一行是最新写入的 seq=200"
+
+    teardown
+}
+
+# ----------------------------------------------------------------------------
+# 测试: mcm_on_exit 链式注册
+# ----------------------------------------------------------------------------
+test_mcm_on_exit_chaining() {
+    echo "=== 测试: mcm_on_exit (链式 trap) ==="
+    setup
+    local marker="$TEST_WORKSPACE/.trap_marker"
+    rm -f "$marker"
+
+    # 子壳跑：先 trap 一个写"A"，再用 mcm_on_exit 追加写"B"
+    bash -c "
+        source $PROJECT_DIR/lib/core.sh
+        trap 'echo A >> $marker' EXIT
+        mcm_on_exit 'echo B >> $marker'
+    "
+
+    local content
+    content=$(cat "$marker" 2>/dev/null | tr '\n' ',')
+    assert_equal "A,B," "$content" "原 trap A 与 mcm_on_exit B 都触发，顺序正确"
+
+    teardown
+}
+
+# ----------------------------------------------------------------------------
+# 测试: mcm_run_command 生命周期
+# ----------------------------------------------------------------------------
+test_mcm_run_command_lifecycle() {
+    echo "=== 测试: mcm_run_command (cmd.start/cmd.end) ==="
+    setup
+    export MCM_EVENTS_FILE="$MEMORY_BASE/.events.ndjson"
+
+    # 跑一个虚命令
+    bash -c "
+        source $PROJECT_DIR/lib/core.sh
+        export MCM_EVENTS_FILE='$MCM_EVENTS_FILE'
+        my_main() { sleep 0.01; return 0; }
+        mcm_run_command my_main
+    "
+
+    local types
+    types=$($PYTHON -c "
+import json
+ts = [json.loads(l).get('type') for l in open('$MCM_EVENTS_FILE')]
+print(','.join(ts))
+")
+    assert_contains "cmd.start,cmd.end" "$types" "cmd.start 与 cmd.end 配对发出"
+
+    # exit 字段 = 0
+    local exit_field
+    exit_field=$($PYTHON -c "
+import json
+for l in open('$MCM_EVENTS_FILE'):
+    o = json.loads(l)
+    if o.get('type') == 'cmd.end':
+        print(o.get('exit'))
+")
+    assert_equal "0" "$exit_field" "cmd.end exit=0"
+
+    # duration_ms 字段存在且 >= 0
+    local dur
+    dur=$($PYTHON -c "
+import json
+for l in open('$MCM_EVENTS_FILE'):
+    o = json.loads(l)
+    if o.get('type') == 'cmd.end':
+        print(o.get('duration_ms', 'MISSING'))
+")
+    assert_true "$([ "$dur" != "MISSING" ] && [ "$dur" -ge 0 ] && echo 0 || echo 1)" \
+        "duration_ms 存在且 >= 0（实际 ${dur}ms）"
+
+    # 跑非零退出
+    bash -c "
+        source $PROJECT_DIR/lib/core.sh
+        export MCM_EVENTS_FILE='$MCM_EVENTS_FILE'
+        fail_main() { return 7; }
+        mcm_run_command fail_main
+    " || true
+    local fail_exit
+    fail_exit=$($PYTHON -c "
+import json
+last_end = None
+for l in open('$MCM_EVENTS_FILE'):
+    o = json.loads(l)
+    if o.get('type') == 'cmd.end':
+        last_end = o
+print(last_end.get('exit') if last_end else 'NONE')
+")
+    assert_equal "7" "$fail_exit" "非零退出码透传到 cmd.end"
+
+    teardown
+}
+
+# ----------------------------------------------------------------------------
+# 测试: log_injection 写 NDJSON（v3.0 替换原管道格式）
+# ----------------------------------------------------------------------------
+test_log_injection_writes_ndjson() {
+    echo "=== 测试: log_injection (写 NDJSON) ==="
+    setup
+    export MCM_EVENTS_FILE="$MEMORY_BASE/.events.ndjson"
+
+    log_injection prompt_submit my-mem 2.5 "kw1,kw2"
+    log_injection paused "" "" "session_start"
+
+    local types
+    types=$($PYTHON -c "
+import json
+ts = [json.loads(l).get('type') for l in open('$MCM_EVENTS_FILE')]
+print(','.join(ts))
+")
+    assert_contains "inject.prompt_submit" "$types" "prompt_submit 写成 inject.prompt_submit"
+    assert_contains "inject.paused" "$types" "paused 写成 inject.paused"
+
+    # 字段映射正确
+    local first_mem
+    first_mem=$($PYTHON -c "
+import json
+o = json.loads(open('$MCM_EVENTS_FILE').readline())
+print(o.get('memory'))
+")
+    assert_equal "my-mem" "$first_mem" "memory 字段正确"
+
+    # 旧 INJECT_LOG_FILE 常量已下线（不再被 inject.sh 定义）
+    local has_old_const
+    has_old_const=$(bash -c "source $PROJECT_DIR/lib/core.sh; source $PROJECT_DIR/lib/inject.sh; echo \"\${INJECT_LOG_FILE:-EMPTY}\"")
+    assert_equal "EMPTY" "$has_old_const" "INJECT_LOG_FILE 常量已下线"
+
+    teardown
+}
+
+# ----------------------------------------------------------------------------
 # 测试套件入口
 # ----------------------------------------------------------------------------
 
@@ -595,6 +796,11 @@ run_all_tests() {
     test_move_and_restore_trash
     test_find_relevant_memories_weighting
     test_precompact_save
+    test_emit_event_basic
+    test_emit_event_truncation
+    test_mcm_on_exit_chaining
+    test_mcm_run_command_lifecycle
+    test_log_injection_writes_ndjson
 
     echo ""
     echo "=========================================="

@@ -52,7 +52,7 @@ main() {
 
     local lock_name="restore_${ENTRY}"
     local lock_token=$(acquire_lock "$lock_name")
-    trap "release_lock '$lock_name' '$lock_token'" EXIT
+    mcm_on_exit "release_lock '$lock_name' '$lock_token'"
 
     restore_from_trash "$ENTRY"
 
@@ -69,9 +69,9 @@ main() {
     fi
 
     release_lock "$lock_name" "$lock_token"
-    trap - EXIT
+    mcm_clear_exit_handlers
 
     log "恢复完成: $ENTRY"
 }
 
-main "$@"
+mcm_run_command main "$@"

@@ -290,7 +290,7 @@ main() {
     # 并发锁
     local lock_name="init_${MEMORY_NAME}"
     local lock_token=$(acquire_lock "$lock_name")
-    trap "release_lock '$lock_name' '$lock_token'" EXIT
+    mcm_on_exit "release_lock '$lock_name' '$lock_token'"
 
     # Step 1: 深度阅读
     local source_files=()
@@ -352,7 +352,7 @@ CHUNK_EOF
 
     # 释放锁
     release_lock "$lock_name" "$lock_token"
-    trap - EXIT
+    mcm_clear_exit_handlers
 
     log "初始化完成: $memory_path"
 
@@ -368,4 +368,4 @@ CHUNK_EOF
     fi
 }
 
-main "$@"
+mcm_run_command main "$@"

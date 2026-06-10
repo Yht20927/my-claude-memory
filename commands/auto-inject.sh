@@ -370,4 +370,4 @@ main() {
     esac
 }
 
-main "$@"
+mcm_run_command main "$@"
