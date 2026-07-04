@@ -1,9 +1,9 @@
 # mcMemory (mcm) — AI 编程助手的分层记忆管理系统
 
-[![Version](https://img.shields.io/badge/version-3.1-blue)](SKILL.md)
+[![Version](https://img.shields.io/badge/version-3.2-blue)](SKILL.md)
 [![Bash](https://img.shields.io/badge/language-bash-green)](#)
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey)](#)
-[![Tests](https://img.shields.io/badge/tests-117%2F117-brightgreen)](#)
+[![Tests](https://img.shields.io/badge/tests-132%2F132-brightgreen)](#)
 
 > 让 AI 编程助手拥有跨会话记忆。纯 Bash 实现，零外部依赖。
 
@@ -383,7 +383,7 @@ mcMemory/
 └── tests/
     ├── test_core.sh            # 单元测试（64 项断言）
     ├── run_all.sh              # 测试入口
-    └── integration/            # 集成测试（53 项断言：hook 端到端 / sync 幂等 / 并发安全 / export-import 往返）
+    └── integration/            # 集成测试（68 项断言：hook 端到端 / sync 幂等 / 并发安全 / export-import / phase2 可观测性）
 ```
 
 ### 数据存储
@@ -438,6 +438,7 @@ L4 优先使用相对路径 symlink，项目目录移动后引用仍然有效。
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
+| **v3.2** | 2026-07-04 | Phase 2 可观测性：op-log 记忆级操作日志（8 写操作接入 `<memory>/log.md`）；全局 STOP kill-switch（`mcmAutoInject stop/unstop`）；`mcmStatus --drift` 雏形（broken L4 / stale / orphan 清单）；doctor canary 端到端验证搜索管线；顺手修 restore 搜索索引更新被静默跳过的 bug；+15 断言 |
 | **v3.1** | 2026-07-04 | B2 修复：`find_project_memory_dir` 支持 `.workspace` 标记 + name 直查 + basename 回退，自定义命名项目的 sync/PreCompact 不再静默失败；B5 修复：`prompt_submit` 统一用 BM25 score 过门槛，下线 grep 二次打分；删除死函数 `find_project_tag`；新增 export/import 往返集成测试；117 项测试 |
 | **v3.0** | 2026-07-04 | NDJSON 事件总线（`emit_event`/`mcm_on_exit`/`mcm_run_command`）接入全部 16 命令 + 3 hooks；新增集成测试套件（hook 端到端 / sync 幂等 / 并发安全）|
 | **v2.4** | 2026-06-09 | BM25 评分替换 sqrt(n) 归一化；中文关键词提取修复（bigram + 停用词）；pause 开关；`mcmInjectLog`/`mcmJournal`/`mcmDoctor`；搜索索引 tmp+mv 原子写；占位 chunk 跳过注入 |

@@ -4,7 +4,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project overview
 
-mcMemory (mcm) is a Claude Code skill that implements a hierarchical memory management system in pure Bash (v3.1). It persists project and personal knowledge to `~/.claude/mcMemories/` so AI context survives across sessions.
+mcMemory (mcm) is a Claude Code skill that implements a hierarchical memory management system in pure Bash (v3.2). It persists project and personal knowledge to `~/.claude/mcMemories/` so AI context survives across sessions.
+
+## v3.2 fixes (2026-07-04) — 可观测性补全（Phase 2）
+
+- **op-log 记忆级操作日志**: `log_memory_op()` 追加 `## [ISO8601] op (actor)` 到 `<memory>/log.md`；init/sync/update/delete/restore/import/inject/precompact 8 个写操作接入。`grep '^## \[' log.md` 即时间线。与 NDJSON 事件总线（命令级）互补：op-log 按记忆隔离、grep 友好。
+- **全局 STOP kill-switch**: `~/.claude/mcMemories/.stop` 存在则 session_start/prompt_submit 无条件跳过注入（emit `inject.stopped`）。`mcmAutoInject stop`/`unstop` 子命令。与 pause（带时长自动恢复）互补：STOP 需显式取消。
+- **mcmStatus --drift 雏形**: 报告 broken L4 链接 / 陈旧 chunk（mtime > `MCM_DRIFT_STALE_DAYS` 天，默认 30）/ 孤儿 chunk（source_file 已删）。仅清单不评分（评分制留 Phase 3）。排除 `.canary/` 探针。
+- **doctor canary 端到端验证**: `mcmDoctor` 在 `$GLOBAL_DIR/.canary/` 隐藏 dotdir 放含唯一 token 的探针记忆，跑 `find_relevant_memories` 断言命中——验证搜索管线真的可用（而非仅文件存在）。canary 不入 index.md 且 dotdir 被 `*/` 跳过，不污染 mcmList/mcmStatus。
+- **顺手修复 restore 潜在 bug**: 旧代码在 `restore_from_trash`（内部已 `rm .origin`）之后才读 `.origin` → 搜索索引更新被静默跳过。改为提前取 origin_path。
+- 测试: +15 断言（op-log/STOP/drift/canary 四组集成测试），总计 132 项。
 
 ## v3.1 fixes (2026-07-04) — 当前状态
 

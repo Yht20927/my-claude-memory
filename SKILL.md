@@ -60,6 +60,10 @@ mcmAutoInject pause 30m   # 暂停 30 分钟
 mcmAutoInject pause 2h    # 暂停 2 小时
 mcmAutoInject resume      # 立即取消
 
+# 全局停止（无条件 kill-switch，需显式取消）
+mcmAutoInject stop        # 全局停止所有注入
+mcmAutoInject unstop      # 取消全局停止
+
 # 查看注入日志（哪些记忆在什么时间被注入、得分、关键词）
 mcmInjectLog              # 最近 20 条
 mcmInjectLog --tail 50
@@ -189,4 +193,4 @@ pre-compact.sh hook 会在压缩前自动:
 
 ---
 
-*版本: v3.1 | BM25 注入 | NDJSON 事件总线 | .workspace 标记(B2) | 单一 BM25 评分(B5) | 动态标签 | 并发锁 | 回收站 | 相对路径 | 搜索索引 | 会话压缩 | 2026-07-04*
+*版本: v3.2 | op-log | STOP kill-switch | drift 报告 | doctor canary | BM25 注入 | NDJSON 事件总线 | .workspace 标记(B2) | 单一 BM25 评分(B5) | 动态标签 | 并发锁 | 回收站 | 相对路径 | 搜索索引 | 会话压缩 | 2026-07-04*
