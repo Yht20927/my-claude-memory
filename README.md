@@ -1,6 +1,6 @@
 # mcMemory (mcm) — AI 编程助手的分层记忆管理系统
 
-[![Version](https://img.shields.io/badge/version-3.4-blue)](SKILL.md)
+[![Version](https://img.shields.io/badge/version-3.5-blue)](SKILL.md)
 [![Bash](https://img.shields.io/badge/language-bash-green)](#)
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey)](#)
 [![Tests](https://img.shields.io/badge/tests-172%2F172-brightgreen)](#)
@@ -438,6 +438,7 @@ L4 优先使用相对路径 symlink，项目目录移动后引用仍然有效。
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
+| **v3.5** | 2026-07-04 | Phase 5 根因修复：inject.sh 模块级常量（INJECT_STATE_DIR/PAUSE_FILE/STOP_FILE）改为惰性求值（调用时读 `$MEMORY_BASE`），消除 source 时冻结导致的 cooldown/pause/stop 写错地址 + 跨运行 flake；移除 phase2/phase4 两处测试 workaround；inject-log.sh 解耦不再 source inject.sh；source inject.sh 不再污染 `$HOME/.inject_state`；172 项测试三连跑全绿 |
 | **v3.4** | 2026-07-04 | Phase 4 搜索评分+命令覆盖：`mcmSearch --score` 按 BM25×权重排序并显示分数（opt-in，复用注入评分管线）；新增 `test_phase4.sh` 24 断言覆盖 search/update --tags/delete-restore-empty-trash/load/journal/inject-log 八命令；修 inject.sh 常量冻结导致的 cooldown 测试 flake；172 项测试 |
 | **v3.3** | 2026-07-04 | Phase 3 评分制+证据分层：`mcmStatus --drift` 100 点评分（L4×8/orphan×8/stale×4/索引缺失×4/占位×2 + A-F 等级 + 索引缺失信号）；chunk frontmatter `source`/`evidence` 字段 → 搜索索引 `mcm-meta` 行 → `find_relevant_memories` BM25 × source_w × evidence_w（best evidence wins，agent×observed=0.595 默认折扣防幻觉）；`mcmMark` 命令人工标注；+16 断言 |
 | **v3.2** | 2026-07-04 | Phase 2 可观测性：op-log 记忆级操作日志（8 写操作接入 `<memory>/log.md`）；全局 STOP kill-switch（`mcmAutoInject stop/unstop`）；`mcmStatus --drift` 雏形（broken L4 / stale / orphan 清单）；doctor canary 端到端验证搜索管线；顺手修 restore 搜索索引更新被静默跳过的 bug；+15 断言 |

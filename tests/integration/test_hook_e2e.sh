@@ -13,7 +13,7 @@ set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/_lib.sh"
 source "$PROJECT_DIR/lib/core.sh"   # 拿到 $PYTHON
-source "$PROJECT_DIR/lib/inject.sh" # 拿到 INJECT_PAUSE_FILE 等常量
+source "$PROJECT_DIR/lib/inject.sh" # prompt_submit_inject 等注入函数
 
 # 准备一个最小项目记忆（chunk 含中文内容，触发 prompt 注入用）
 _seed_project_memory() {

@@ -9,16 +9,15 @@
 #   - log_injection：每次注入写一行到 .inject_log，供 mcmInjectLog 查看
 # ============================================================================
 
-# 注入追踪目录（避免重复注入）
-INJECT_STATE_DIR="${MEMORY_BASE:-$HOME/.claude/mcMemories}/.inject_state"
-mkdir -p "$INJECT_STATE_DIR"
-
-# pause 标记文件
-INJECT_PAUSE_FILE="${MEMORY_BASE:-$HOME/.claude/mcMemories}/.paused_until"
-
-# 全局 STOP kill-switch（v3.2 Phase 2）：.stop 存在则无条件跳过所有注入
-# 与 pause（带时长自动恢复）互补：STOP 需 mcmAutoInject unstop 显式取消
-INJECT_STOP_FILE="${MEMORY_BASE:-$HOME/.claude/mcMemories}/.stop"
+# ----------------------------------------------------------------------------
+# v3.5: MEMORY_BASE 派生路径改为惰性求值（调用时读取 $MEMORY_BASE）。
+#   旧实现在 source 时冻结 INJECT_STATE_DIR / INJECT_PAUSE_FILE / INJECT_STOP_FILE
+#   常量，若调用方在 source 后改 MEMORY_BASE（如集成测试 it_setup 换 fixture，
+#   或多 base 部署），常量仍指向旧值 → cooldown/pause/stop 写错地方，引发
+#   静默失败与跨运行 flake（v3.4 phase4 journal 测试即踩此坑）。
+#   现各函数内联 "${MEMORY_BASE:-$HOME/.claude/mcMemories}/<file>" 读取现行值；
+#   mkdir 副作用移到 mark_injected（写时建），不在 source 时触发。
+# ----------------------------------------------------------------------------
 
 # 配置
 MAX_INJECT_TOKENS_ESTIMATE="${MAX_INJECT_TOKENS_ESTIMATE:-2000}"
@@ -30,11 +29,13 @@ INJECT_BM25_MIN_SCORE="${INJECT_BM25_MIN_SCORE:-0}"
 
 # ----------------------------------------------------------------------------
 # pause 检查：若 .paused_until 存在且时间戳未过期，返回 0（已暂停）
+# v3.5: 路径惰性求值（调用时读 $MEMORY_BASE）
 # ----------------------------------------------------------------------------
 is_inject_paused() {
-    [ -f "$INJECT_PAUSE_FILE" ] || return 1
+    local pause_file="${MEMORY_BASE:-$HOME/.claude/mcMemories}/.paused_until"
+    [ -f "$pause_file" ] || return 1
     local until_ts
-    until_ts=$(cat "$INJECT_PAUSE_FILE" 2>/dev/null)
+    until_ts=$(cat "$pause_file" 2>/dev/null)
     [ -z "$until_ts" ] && return 1
     local now
     now=$(date +%s)
@@ -42,15 +43,17 @@ is_inject_paused() {
         return 0   # 仍在暂停期
     fi
     # 已过期：清理掉 pause 文件
-    rm -f "$INJECT_PAUSE_FILE" 2>/dev/null
+    rm -f "$pause_file" 2>/dev/null
     return 1
 }
 
 # ----------------------------------------------------------------------------
 # 全局 STOP 检查（v3.2）：.stop 文件存在则无条件停止注入
+# v3.5: 路径惰性求值
 # ----------------------------------------------------------------------------
 is_inject_stopped() {
-    [ -f "$INJECT_STOP_FILE" ]
+    local stop_file="${MEMORY_BASE:-$HOME/.claude/mcMemories}/.stop"
+    [ -f "$stop_file" ]
 }
 
 # ----------------------------------------------------------------------------
@@ -270,7 +273,8 @@ PY
 
 is_in_cooldown() {
     local memory_name="$1"
-    local state_file="$INJECT_STATE_DIR/${memory_name}.last"
+    local state_dir="${MEMORY_BASE:-$HOME/.claude/mcMemories}/.inject_state"
+    local state_file="$state_dir/${memory_name}.last"
 
     if [ -f "$state_file" ]; then
         local last_time=$(cat "$state_file")
@@ -283,9 +287,12 @@ is_in_cooldown() {
 }
 
 # 标记记忆已被注入
+# v3.5: 路径惰性求值；mkdir 移到写时（不在 source 时建空目录）
 mark_injected() {
     local memory_name="$1"
-    date +%s > "$INJECT_STATE_DIR/${memory_name}.last"
+    local state_dir="${MEMORY_BASE:-$HOME/.claude/mcMemories}/.inject_state"
+    mkdir -p "$state_dir"
+    date +%s > "$state_dir/${memory_name}.last"
 }
 
 # ============================================================================

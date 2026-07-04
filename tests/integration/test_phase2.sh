@@ -46,10 +46,8 @@ it_op_log_records_init_and_sync() {
 
 # ----------------------------------------------------------------------------
 it_stop_suppresses_injection() {
-    # it_setup 已把 MEMORY_BASE 指向 fixture，但 inject.sh 在文件顶部 source 时
-    # 已用旧的 MEMORY_BASE 冻结了 INJECT_STOP_FILE。这里重新 source 让它指向 fixture。
-    source "$PROJECT_DIR/lib/inject.sh"
-
+    # v3.5: inject.sh 已惰性求值，不再在 source 时冻结 INJECT_STOP_FILE，
+    # 故无需重 source —— is_inject_stopped 在调用时读现行 $MEMORY_BASE。
     local ws
     ws=$(_seed_workspace)
     bash "$PROJECT_DIR/commands/init.sh" \

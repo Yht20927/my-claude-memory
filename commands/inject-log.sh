@@ -23,8 +23,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LIB_DIR="$(dirname "$SCRIPT_DIR")/lib"
-source "$LIB_DIR/core.sh"
-source "$LIB_DIR/inject.sh"   # 引入 INJECT_PAUSE_FILE
+source "$LIB_DIR/core.sh"   # v3.5: 不再 source inject.sh —— pause 路径内联惰性求值
 
 TAIL_N=20
 ACTION="show"
@@ -150,10 +149,11 @@ print(json.dumps(out, indent=2, ensure_ascii=False))
             "$ts" "$event" "${memory:--}" "${score:--}" "${keywords:--}"
     done
 
-    # 暂停状态提示
-    if [ -f "$INJECT_PAUSE_FILE" ]; then
+    # 暂停状态提示（v3.5: 路径惰性求值，不依赖 inject.sh 冻结常量）
+    local pause_file="${MEMORY_BASE:-$HOME/.claude/mcMemories}/.paused_until"
+    if [ -f "$pause_file" ]; then
         local until_ts
-        until_ts=$(cat "$INJECT_PAUSE_FILE" 2>/dev/null)
+        until_ts=$(cat "$pause_file" 2>/dev/null)
         local now=$(date +%s)
         if [ -n "$until_ts" ] && [ "$now" -lt "$until_ts" ]; then
             local until_str

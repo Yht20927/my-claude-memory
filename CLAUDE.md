@@ -6,6 +6,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 mcMemory (mcm) is a Claude Code skill that implements a hierarchical memory management system in pure Bash (v3.2). It persists project and personal knowledge to `~/.claude/mcMemories/` so AI context survives across sessions.
 
+## v3.5 fixes (2026-07-04) — inject.sh 常量惰性求值（Phase 5）
+
+- **根因修复 inject.sh 模块级常量冻结**: 旧实现在 source 时算定 `INJECT_STATE_DIR`/`INJECT_PAUSE_FILE`/`INJECT_STOP_FILE`（并 `mkdir -p` 副作用），调用方后改 `$MEMORY_BASE` 时（集成测试换 fixture、多 base 部署），常量仍指向旧值 → cooldown/pause/stop 写错地方，引发静默失败与跨运行 120s 内 flake（v3.4 phase4 journal 测试即踩此坑，v3.2 phase2 STOP 测试也有同源 workaround）。现各函数内联 `"${MEMORY_BASE:-$HOME/.claude/mcMemories}/<file>"` 在调用时读取现行值；`mkdir` 副作用移到 `mark_injected` 写时建。
+- **移除两处测试 workaround**: phase2 STOP 测试与 phase4 journal 测试不再需要"it_setup 后重 source inject.sh"——根因已修，三连跑全绿。
+- **inject-log.sh 解耦**: 不再 source inject.sh（它原本只为拿已下线的 `INJECT_PAUSE_FILE` 常量），pause 路径内联惰性。
+- **副作用收益**: source inject.sh 不再在 `$HOME/.claude/mcMemories/.inject_state` 建空目录（消除测试对真实 HOME 的污染）。
+- 测试: 仍 172 项（无新增断言，三连跑验证 flake 根除）。
+
 ## v3.4 fixes (2026-07-04) — 搜索评分排序 + 命令覆盖（Phase 4）
 
 - **mcmSearch --score**: 新增 `--score` 开关，按 BM25×source×evidence 权重排序结果并显示分数。复用 `find_relevant_memories` 评分管线（pass `MAX_INJECT_MEMORIES=9999` 取全部），候选 chunk 仍按子串匹配收集（保持召回语义），仅排序/展示改为评分。opt-in：不开 `--score` 时行为与 v3.3 完全一致（零回归）。`--score --json` 输出含 `score` 字段。顺手补 `--scope` 解析（`user`→`global`）。

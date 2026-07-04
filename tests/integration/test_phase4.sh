@@ -200,11 +200,8 @@ it_load_outputs_layers() {
 # mcmJournal 写 session_notes.md + mcmInjectLog 展示注入事件
 # ----------------------------------------------------------------------------
 it_journal_and_inject_log() {
-    # inject.sh 在文件顶部 source 时已用旧 MEMORY_BASE 冻结 INJECT_STATE_DIR 等
-    # 常量 → cooldown 会写到真实 $HOME，跨运行 120s 内 jourproj 会被误判冷却而
-    # 跳过注入 → 事件不发出。这里在 it_setup 之后重 source，让常量指向 fixture。
-    source "$PROJECT_DIR/lib/inject.sh"
-
+    # v3.5: inject.sh 已惰性求值（INJECT_STATE_DIR 等在调用时读 $MEMORY_BASE），
+    # 无需重 source —— cooldown 写到 fixture 而非 $HOME，无跨运行 flake。
     local ws
     ws=$(_seed_ws)
     bash "$PROJECT_DIR/commands/init.sh" --name "jourproj" --tags "tools" \
