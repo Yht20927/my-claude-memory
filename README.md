@@ -1,9 +1,9 @@
 # mcMemory (mcm) — AI 编程助手的分层记忆管理系统
 
-[![Version](https://img.shields.io/badge/version-2.3-blue)](SKILL.md)
+[![Version](https://img.shields.io/badge/version-3.1-blue)](SKILL.md)
 [![Bash](https://img.shields.io/badge/language-bash-green)](#)
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey)](#)
-[![Tests](https://img.shields.io/badge/tests-48%2F48-brightgreen)](#)
+[![Tests](https://img.shields.io/badge/tests-117%2F117-brightgreen)](#)
 
 > 让 AI 编程助手拥有跨会话记忆。纯 Bash 实现，零外部依赖。
 
@@ -265,7 +265,7 @@ mcmAutoInject status          # 查看状态
 mcmAutoInject off             # 关闭
 ```
 
-**注入策略：** 冷却 120s · 相关性阈值 2 分 · 最多 3 个记忆 · header 行匹配 ×3 权重
+**注入策略：** BM25 评分 (k1=1.2, b=0.75, Robertson IDF) · 冷却 120s · 相关性阈值 `INJECT_BM25_MIN_SCORE`（默认 0，即任何正分；可调）· 最多 3 个记忆 · header 命中 ×3 权重 · 中英文关键词提取
 
 ### PreCompact 会话压缩
 
@@ -381,7 +381,9 @@ mcMemory/
 │   ├── restore.sh              # mcmRestore
 │   └── empty-trash.sh          # mcmEmptyTrash
 └── tests/
-    └── test_core.sh            # 单元测试（48 项断言）
+    ├── test_core.sh            # 单元测试（64 项断言）
+    ├── run_all.sh              # 测试入口
+    └── integration/            # 集成测试（53 项断言：hook 端到端 / sync 幂等 / 并发安全 / export-import 往返）
 ```
 
 ### 数据存储
@@ -436,6 +438,9 @@ L4 优先使用相对路径 symlink，项目目录移动后引用仍然有效。
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
+| **v3.1** | 2026-07-04 | B2 修复：`find_project_memory_dir` 支持 `.workspace` 标记 + name 直查 + basename 回退，自定义命名项目的 sync/PreCompact 不再静默失败；B5 修复：`prompt_submit` 统一用 BM25 score 过门槛，下线 grep 二次打分；删除死函数 `find_project_tag`；新增 export/import 往返集成测试；117 项测试 |
+| **v3.0** | 2026-07-04 | NDJSON 事件总线（`emit_event`/`mcm_on_exit`/`mcm_run_command`）接入全部 16 命令 + 3 hooks；新增集成测试套件（hook 端到端 / sync 幂等 / 并发安全）|
+| **v2.4** | 2026-06-09 | BM25 评分替换 sqrt(n) 归一化；中文关键词提取修复（bigram + 停用词）；pause 开关；`mcmInjectLog`/`mcmJournal`/`mcmDoctor`；搜索索引 tmp+mv 原子写；占位 chunk 跳过注入 |
 | **v2.3** | 2026-06-08 | flock fd 自动分配消除碰撞风险、subshell 修复使 local 生效、O(n²)→O(n) 文件拆分、sed_escape 纯 sed 实现、索引快速路径统一、批量 frontmatter 更新、搜索索引增量更新优化、48 项测试 |
 | v2.2 | 2026-06-04 | PreCompact 会话压缩、增量搜索索引、消除双次 split、scope 过滤修复、批量文件信息、JSON 注入修复、header 加权相关性、46 项测试 |
 | v2.1 | 2026-04-27 | 自动注入系统（SessionStart/UserPromptSubmit/PreCompact hooks）、hook_config 修复、全文扫描注入、global auto 冷却标记 |

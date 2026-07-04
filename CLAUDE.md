@@ -4,7 +4,30 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project overview
 
-mcMemory (mcm) is a Claude Code skill that implements a hierarchical memory management system in pure Bash (v2.3). It persists project and personal knowledge to `~/.claude/mcMemories/` so AI context survives across sessions.
+mcMemory (mcm) is a Claude Code skill that implements a hierarchical memory management system in pure Bash (v3.1). It persists project and personal knowledge to `~/.claude/mcMemories/` so AI context survives across sessions.
+
+## v3.1 fixes (2026-07-04) — 当前状态
+
+- **B2 (CRITICAL, 数据完整性)**: `find_project_memory_dir` 旧实现只用 `basename(git toplevel)` 推名字，忽略 `mcmInit --name`，导致自定义命名项目的 `mcmSync`/`precompact_save`/`session_start_inject` 找不到记忆目录而静默失败（PreCompact 失败时 session_notes.md 不清空，会话笔记可能丢失）。修复：查找顺序改为 ① 显式 name 直查 → ② `.workspace` 标记扫描（`mcmInit` 时记录 workspace origin）→ ③ basename 回退（兼容旧记忆）。`mcmInit` 写 `$memory_path/.workspace`；`mcmSync` 透传 `--name`。
+- **B5 (HIGH, 评分一致性)**: `prompt_submit_inject` 旧实现在 `find_relevant_memories` 已 BM25 排序后又用 `grep -iqF` 重算 0/3/1 分（门槛 2），丢弃了 BM25 score，两套评分叠加会漂移。修复：`find_relevant_memories` 输出 `name<TAB>score`，`prompt_submit` 直接用 BM25 score 过 `INJECT_BM25_MIN_SCORE` 门槛（默认 0），下线 grep 二次打分。
+- **死代码清理**: 删除无调用方的 `find_project_tag()`（与 B2 同区域）。
+- **文档同步**: CLAUDE.md/README.md/SKILL.md 从 v2.3/48 断言同步到 v3.1/117 断言。
+
+## v3.0 fixes (2026-07-04) — 事件总线 + 集成测试地基
+
+- **NDJSON 事件总线** (`lib/events.sh`): `emit_event` 单行原子追加 `.events.ndjson`；`mcm_on_exit` 链式 trap 注册（兼容已有锁释放）；`mcm_run_command` 包裹 16 个命令的 `cmd.start`/`cmd.end`（带 `duration_ms`/`exit`），3 个 hooks emit `hook.invoke`/`hook.complete`。
+- **集成测试套件**: `tests/integration/` 新增 `test_hook_e2e.sh`（5 it，hook 端到端 + 中文 BM25 召回）、`test_sync_idempotent.sh`（含 B2 回归）、`test_concurrent.sh`（10 并发 sync 无损坏 + inject 期间不撕裂）。
+- 配置: `MCM_EVENTS_FILE` / `MCM_EVENTS_MAX_BYTES`（默认 1MB，超限 `tail -n 2000` 截尾）。
+
+## v2.4 fixes (2026-06-09)
+
+- **BM25 评分**: `find_relevant_memories` 标准 BM25 (k1=1.2, b=0.75) + Robertson IDF + 长度归一化，替换旧 sqrt(n) 归一化；header 命中 ×3，性能 ~10s → <100ms。
+- **中文关键词**: `extract_keywords` 抓连续汉字段 + 2-gram bigram + 中英停用词表，修复中文零召回 bug。
+- **pause 开关**: `is_inject_paused` 检查 `.paused_until` 时间戳；`mcmAutoInject pause 30m/2h/1d`。
+- **新命令**: `mcmInjectLog`（注入事件日志）、`mcmJournal`（一行会话笔记）、`mcmDoctor`（健康检查 + 脏 tag 迁移 + 占位 chunk 报告）。
+- **搜索索引原子写**: `rebuild`/`remove`/`update` 走 tmp+mv，消除 TOCTOU；集成测试验证 10 并发无撕裂。
+- **占位 chunk 跳过**: `is_placeholder_chunk` 在注入和 session_start 都跳过 `[待AI补充` chunk。
+- 测试: 63 单元 + 33 集成断言。
 
 ## v2.3 fixes (2026-06-08)
 
