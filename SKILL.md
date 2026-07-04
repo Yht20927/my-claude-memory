@@ -17,9 +17,9 @@ allowed-tools: ["Bash", "Read", "Write", "Grep"]
 | `mcmInit` | 初始化项目/个人记忆 | [commands/init.sh](commands/init.sh) |
 | `mcmSync` | 增量同步已有记忆 | [commands/sync.sh](commands/sync.sh) |
 | `mcmLoad <名称>` | 加载记忆到当前会话上下文 | [commands/load.sh](commands/load.sh) |
-| `mcmSearch <关键词>` | 全文搜索记忆 | [commands/search.sh](commands/search.sh) |
+| `mcmSearch <关键词>` | 全文搜索记忆（`--score` 按 BM25×权重排序） | [commands/search.sh](commands/search.sh) |
 | `mcmList` | 列出所有已注册记忆 | [commands/list.sh](commands/list.sh) |
-| `mcmStatus` | 记忆健康总览 | [commands/status.sh](commands/status.sh) |
+| `mcmStatus` | 记忆健康总览；`--drift` 100 点评分（v3.3） | [commands/status.sh](commands/status.sh) |
 | `mcmDelete <名称>` | 删除记忆（移至回收站） | [commands/delete.sh](commands/delete.sh) |
 | `mcmUpdate <名称>` | 更新记忆元数据 | [commands/update.sh](commands/update.sh) |
 | `mcmExport <名称>` | 导出记忆为归档 | [commands/export.sh](commands/export.sh) |
@@ -201,4 +201,4 @@ pre-compact.sh hook 会在压缩前自动:
 
 ---
 
-*版本: v3.3 | drift 100 点评分 | 证据/来源分层 (source/evidence → BM25 权重) | mcmMark | op-log | STOP kill-switch | doctor canary | BM25 注入 | NDJSON 事件总线 | .workspace 标记(B2) | 单一 BM25 评分(B5) | 动态标签 | 并发锁 | 回收站 | 相对路径 | 搜索索引 | 会话压缩 | 2026-07-04*
+*版本: v3.4 | mcmSearch --score 评分排序 | drift 100 点评分 | 证据/来源分层 (source/evidence → BM25 权重) | mcmMark | op-log | STOP kill-switch | doctor canary | BM25 注入 | NDJSON 事件总线 | .workspace 标记(B2) | 单一 BM25 评分(B5) | 动态标签 | 并发锁 | 回收站 | 相对路径 | 搜索索引 | 会话压缩 | 2026-07-04*

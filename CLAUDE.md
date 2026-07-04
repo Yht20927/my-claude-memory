@@ -6,6 +6,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 mcMemory (mcm) is a Claude Code skill that implements a hierarchical memory management system in pure Bash (v3.2). It persists project and personal knowledge to `~/.claude/mcMemories/` so AI context survives across sessions.
 
+## v3.4 fixes (2026-07-04) — 搜索评分排序 + 命令覆盖（Phase 4）
+
+- **mcmSearch --score**: 新增 `--score` 开关，按 BM25×source×evidence 权重排序结果并显示分数。复用 `find_relevant_memories` 评分管线（pass `MAX_INJECT_MEMORIES=9999` 取全部），候选 chunk 仍按子串匹配收集（保持召回语义），仅排序/展示改为评分。opt-in：不开 `--score` 时行为与 v3.3 完全一致（零回归）。`--score --json` 输出含 `score` 字段。顺手补 `--scope` 解析（`user`→`global`）。
+- **命令集成测试覆盖**: 新增 `test_phase4.sh`（24 断言）补 8 个无专门集成测试的命令：mcmSearch（召回/--expand/--json/--global/--score 排序）、mcmUpdate --tags（标签迁移物理移动目录）、delete→restore→empty-trash 完整回收站生命周期、mcmLoad（L1/L3）、mcmJournal + mcmInjectLog（注入事件解析）。
+- **修 inject.sh 常量冻结的测试 flake**: `it_journal_and_inject_log` 在 it_setup 后重 source inject.sh，让 `INJECT_STATE_DIR` 等指向 fixture（旧实现指向 `$HOME` → cooldown 跨运行 120s 内误判 jourproj 冷却而跳过注入 → 事件不发出）。与 v3.2 phase2 STOP 测试同一潜藏设计问题，本测试沿用其 workaround。
+- 测试: +24 断言，总计 172 项。
+
 ## v3.3 fixes (2026-07-04) — 评分制 + 证据分层（Phase 3）
 
 - **drift 评分制 (mex 风格)**: `mcmStatus --drift` 从清单升级为 100 点评分。每个记忆独立打分，扣分项：broken L4 ×8 / orphan chunk ×8 / 陈旧 chunk ×4 / 索引缺失 ×4 / 占位 chunk ×2。等级 A(≥95) B(≥80) C(≥60) D(≥40) F(<40)。新增**索引缺失**信号（chunk 存在但未被 `$SEARCH_INDEX` 收录 → 搜索召回不到，比 orphan 更隐蔽）。`--drift --json` 输出 per-memory 分数 + issues 数组。修了 v3.2 雏形的 subshell 陷阱（helper 在 `$(...)` 内 `issues+=` 失效 → 改走临时文件传递）。
