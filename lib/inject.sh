@@ -180,11 +180,17 @@ if not keywords:
     sys.exit(0)
 
 header_re = re.compile(r'^=====\s+(\[global\]\s+)?(.+?)\s+/\s+(.+?)\s+=====$')
+# v3.3: mcm-meta 元数据行 —— source/evidence → 权重（防幻觉折扣）
+meta_re = re.compile(r'^<!-- mcm-meta source=(\S+) evidence=(\S+) -->$')
+SOURCE_W = {'user': 1.0, 'agent': 0.7, 'system': 0.5}
+EVIDENCE_W = {'validated': 1.0, 'observed': 0.85, 'hypothesis': 0.6}
+DEFAULT_W = SOURCE_W['agent'] * EVIDENCE_W['observed']  # 0.595
 
 # BM25 数据结构
 tf = defaultdict(lambda: defaultdict(int))     # tf[mem][kw] = 词频（header 命中 ×3）
 doc_freq = defaultdict(int)                     # df[kw] = 包含该 kw 的记忆数
 mem_length = defaultdict(int)                   # mem[mem] = 总字符数
+max_weight = defaultdict(lambda: DEFAULT_W)      # mem → 最大 chunk 权重（best evidence wins）
 memory_names = set()
 current_mem = ''
 
@@ -201,12 +207,21 @@ try:
                 for kw in keywords:
                     if kw in lower:
                         tf[current_mem][kw] += 3
-            elif current_mem and line:
-                # 正文：记录长度 + 词频计数
-                mem_length[current_mem] += len(line)
-                for kw in keywords:
-                    if kw in lower:
-                        tf[current_mem][kw] += 1
+            else:
+                mm = meta_re.match(line)
+                if mm:
+                    # 元数据行：算该 chunk 权重，取记忆内最大值（best evidence wins）
+                    s, e = mm.group(1), mm.group(2)
+                    w = SOURCE_W.get(s, SOURCE_W['agent']) * EVIDENCE_W.get(e, EVIDENCE_W['observed'])
+                    if w > max_weight[current_mem]:
+                        max_weight[current_mem] = w
+                    # meta 行不计入 mem_length / tf
+                elif current_mem and line:
+                    # 正文：记录长度 + 词频计数
+                    mem_length[current_mem] += len(line)
+                    for kw in keywords:
+                        if kw in lower:
+                            tf[current_mem][kw] += 1
 except Exception:
     sys.exit(0)
 
@@ -237,11 +252,13 @@ for mem in memory_names:
         # BM25 TF 长度归一化
         tf_norm = term_freq * (k1 + 1) / (term_freq + k1 * (1 - b + b * mem_len / avg_len))
         score += idf * tf_norm
-    scores[mem] = score
+    # v3.3: 最终权重 × best evidence weight（best evidence wins，per memory）
+    scores[mem] = score * max_weight[mem]
 
 sorted_mems = sorted(scores.items(), key=lambda x: x[1], reverse=True)
 # B5 (v3.1): 输出 "name<TAB>score"，让 prompt_submit 直接用 BM25 score 过门槛，
 # 不再在调用方用 grep 二次打分（旧 0/3/1 双评分系统已下线）。
+# v3.3: score 已乘以 source×evidence 权重（agent/observed 默认 ×0.595 折扣）。
 for mem, sc in sorted_mems[:max_items]:
     print(f"{mem}\t{sc:.4f}")
 PY
@@ -510,11 +527,14 @@ precompact_save() {
         local chunk_path="$chunks_dir/$chunk_name"
 
         # 生成 L3 chunk（含 frontmatter + 内容）
+        # v3.3: source=agent evidence=observed（AI 生成的会话摘要，默认折扣）
         {
             echo "---"
             echo "source_file: $notes_file"
             echo "created: $date_label"
             echo "type: session_summary"
+            echo "source: agent"
+            echo "evidence: observed"
             echo "---"
             echo ""
             echo "# 会话摘要 — $date_label"

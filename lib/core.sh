@@ -663,6 +663,8 @@ split_source_file() {
                 echo "---"
                 echo "source_file: $source_file"
                 echo "section: $current_heading"
+                echo "source: agent"
+                echo "evidence: observed"
                 echo "---"
                 echo ""
                 printf '%s\n' "${chunk_lines[@]}"
@@ -954,7 +956,26 @@ empty_trash() {
 #   - append_to_search_index 仍用 >> 追加。POSIX 规定 < PIPE_BUF (4096)
 #     的写入原子；单 chunk 几 KB 在主流文件系统上也是单次 write(2)，
 #     读端最多看到"少了几个新 chunk"而不是 corrupt。
-# ============================================================================
+# v3.3: 证据/来源分层
+#   - 每个 chunk section header 后插一行 <!-- mcm-meta source=X evidence=Y -->
+#     由 chunk_meta_line() 从 frontmatter 提取（缺省 agent/observed）。
+#   - find_relevant_memories 解析该行算权重：weight = source_w × evidence_w，
+#     final_score = bm25 × max_weight（best evidence wins，per memory）。
+#   - 缺省 agent×observed=0.595 折扣防幻觉；mcmMark 可提升为 user/validated=1.0。
+#   - 旧索引（无 meta 行）按缺省 0.595 处理，向后兼容。
+# ----------------------------------------------------------------------------
+
+# v3.3: 从 chunk frontmatter 提取 source/evidence，emit 索引元数据行
+# 注意 ^source: 不匹配 ^source_file:（后者是 _ 后接 file，非冒号）
+chunk_meta_line() {
+    local chunk="$1"
+    local src evi
+    src=$(grep '^source:[[:space:]]*' "$chunk" 2>/dev/null | head -1 | sed 's/^source:[[:space:]]*//; s/^"//; s/"$//')
+    evi=$(grep '^evidence:[[:space:]]*' "$chunk" 2>/dev/null | head -1 | sed 's/^evidence:[[:space:]]*//; s/^"//; s/"$//')
+    src="${src:-agent}"
+    evi="${evi:-observed}"
+    echo "<!-- mcm-meta source=$src evidence=$evi -->"
+}
 
 # 把整个文本原子写入 $SEARCH_INDEX：写到同目录 .tmp 再 mv，避免读端撞上 half-write
 _atomic_write_index() {
@@ -1024,6 +1045,7 @@ append_to_search_index() {
 
     # 收集所有 chunk 内容到临时文件，再一次性 cat >> 索引
     # （单 chunk 追加多次仍可能被并发读端撕裂；先合并后单次 append 缩小窗口）
+    # v3.3: 每段 header 后插 mcm-meta 元数据行（source/evidence → BM25 权重）
     local buf="${SEARCH_INDEX}.append.$$"
     : > "$buf"
     for chunk in "$chunks_dir"/*.md; do
@@ -1031,6 +1053,7 @@ append_to_search_index() {
         local chunk_name=$(basename "$chunk")
         {
             echo "$prefix $chunk_name ====="
+            chunk_meta_line "$chunk"
             cat "$chunk"
             echo ""
         } >> "$buf"
@@ -1064,6 +1087,7 @@ rebuild_search_index() {
             local project_name=$(basename "$(dirname "$(dirname "$chunk")")")
             local chunk_name=$(basename "$chunk")
             echo "===== $project_name / $chunk_name =====" >> "$tmp"
+            chunk_meta_line "$chunk" >> "$tmp"
             cat "$chunk" >> "$tmp"
             echo "" >> "$tmp"
         done < <(find "$PROJECTS_DIR" -name "*.md" -path "*/chunks/*" -print0 2>/dev/null)
@@ -1074,6 +1098,7 @@ rebuild_search_index() {
             local memory_name=$(basename "$(dirname "$(dirname "$chunk")")")
             local chunk_name=$(basename "$chunk")
             echo "===== [global] $memory_name / $chunk_name =====" >> "$tmp"
+            chunk_meta_line "$chunk" >> "$tmp"
             cat "$chunk" >> "$tmp"
             echo "" >> "$tmp"
         done < <(find "$GLOBAL_DIR" -name "*.md" -path "*/chunks/*" -print0 2>/dev/null)

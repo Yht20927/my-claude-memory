@@ -163,6 +163,8 @@ print(json.dumps(data))
 source_file: $filepath
 last_sync: $mtime
 hash: $hash
+source: agent
+evidence: observed
 ---
 
 # $filename

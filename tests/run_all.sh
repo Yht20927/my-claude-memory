@@ -35,6 +35,7 @@ run_suite "Integration: sync"       "$TEST_DIR/integration/test_sync_idempotent.
 run_suite "Integration: concurrent" "$TEST_DIR/integration/test_concurrent.sh"
 run_suite "Integration: export/import" "$TEST_DIR/integration/test_export_import.sh"
 run_suite "Integration: phase2 observability" "$TEST_DIR/integration/test_phase2.sh"
+run_suite "Integration: phase3 scoring+evidence" "$TEST_DIR/integration/test_phase3.sh"
 
 echo ""
 echo "=========================================="

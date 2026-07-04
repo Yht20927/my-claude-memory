@@ -155,76 +155,245 @@ print(f'{b:.1f}TB')
 }
 
 # ----------------------------------------------------------------------------
-# Drift 报告 (v3.2 Phase 2 雏形 — 仅清单，不评分；评分制在 Phase 3)
+# Drift 报告 (v3.3 — 100 点评分制，mex 风格)
 # ----------------------------------------------------------------------------
-# 扫描三类信号：
-#   - broken L4 链接（复用 check_l4_health，仅项目记忆有 .claude/）
-#   - 陈旧 chunk（mtime > MCM_DRIFT_STALE_DAYS 天，默认 30）
-#   - 孤儿 chunk（frontmatter source_file 指向的文件已删；空 source 视为会话摘要/canary，跳过）
+# 每个记忆独立打分，满分 100，扣分项：
+#   - broken L4 链接   ×8   （仅项目记忆有 .claude/）
+#   - orphan chunk     ×8   （frontmatter source_file 指向的文件已删；空 source 视为会话摘要/canary，跳过）
+#   - 陈旧 chunk       ×4   （mtime > MCM_DRIFT_STALE_DAYS 天，默认 30）
+#   - 索引缺失         ×4   （chunk 存在但未被 $SEARCH_INDEX 收录 → 搜索召回不到）
+#   - 占位 chunk       ×2   （含 [待AI补充，尚未经 AI 浓缩）
+# 等级：A(≥95) B(≥80) C(≥60) D(≥40) F(<40)
 # 排除 .canary/（mcmDoctor 的探针，非用户数据）
 # ----------------------------------------------------------------------------
 
-drift_report() {
-    local stale_days="${MCM_DRIFT_STALE_DAYS:-30}"
-    local broken_l4=0
-    local stale_chunks=0
-    local orphan_chunks=0
-    local -a issues=()
+# 分数 → 等级
+_drift_grade() {
+    local s="$1"
+    if   [ "$s" -ge 95 ]; then echo A
+    elif [ "$s" -ge 80 ]; then echo B
+    elif [ "$s" -ge 60 ]; then echo C
+    elif [ "$s" -ge 40 ]; then echo D
+    else                      echo F
+    fi
+}
 
-    local base
-    for base in "$PROJECTS_DIR" "$GLOBAL_DIR"; do
-        [ -d "$base" ] || continue
+# 统计一个记忆中"存在于磁盘但未被搜索索引收录"的 chunk 数
+# 缺失项追加到 $issues_tmp 文件（规避命令替换子壳陷阱）
+_count_unindexed_chunks() {
+    local name="$1" chunks_dir="$2" is_global="$3" issues_tmp="$4"
+    local total
+    total=$(ls "$chunks_dir"/*.md 2>/dev/null | wc -l)
+    total=${total// /}
+    [ "$total" -eq 0 ] && { echo 0; return; }
+    [ -f "$SEARCH_INDEX" ] || { echo "$total"; return; }
 
-        # chunk 级扫描（排除 .canary 探针）
-        while IFS= read -r -d '' chunk; do
-            # orphan: source_file 非空且指向的文件不存在
-            local src
-            src=$(grep '^source_file: ' "$chunk" 2>/dev/null | head -1 | sed 's/^source_file: //')
-            if [ -n "$src" ] && [ "$src" != '""' ] && [ ! -f "$src" ]; then
-                orphan_chunks=$((orphan_chunks + 1))
-                issues+=("orphan: ${chunk#$MEMORY_BASE/} → $src (源文件已删)")
-            fi
-            # stale: mtime 超过阈值
-            if [ -n "$(find "$chunk" -mtime +"$stale_days" 2>/dev/null)" ]; then
-                stale_chunks=$((stale_chunks + 1))
-            fi
-        done < <(find "$base" -name "*.md" -path "*/chunks/*" ! -path "*/.canary/*" -print0 2>/dev/null)
+    # 从索引中抽取该记忆所有已收录的 chunk 名（精确匹配记忆名 + global 标志）
+    local indexed
+    indexed=$(awk -v name="$name" -v want_global="$is_global" '
+        /^===== / {
+            line = $0
+            sub(/^===== /, "", line); sub(/ =====$/, "", line)
+            is_g = (line ~ /^\[global\] /)
+            if (is_g) sub(/^\[global\] /, "", line)
+            n = line; sub(/ \/ .*/, "", n)
+            c = line; sub(/^[^\/]*\/ /, "", c)
+            if (n == name && ((want_global == "true" && is_g) || (want_global != "true" && !is_g)))
+                print c
+        }
+    ' "$SEARCH_INDEX" 2>/dev/null)
 
-        # L4 broken（仅项目记忆）
-        if [ "$base" = "$PROJECTS_DIR" ]; then
-            while IFS= read -r -d '' l4dir; do
-                local res b
-                res=$(check_l4_health "$l4dir")
-                b=$(echo "$res" | cut -d' ' -f2)
-                if [ "${b:-0}" -gt 0 ]; then
-                    broken_l4=$((broken_l4 + b))
-                    issues+=("broken-l4: ${l4dir#$MEMORY_BASE/} ($b 个失效链接)")
-                fi
-            done < <(find "$base" -type d -name ".claude" -print0 2>/dev/null)
+    local missing=0 chunk cn
+    for chunk in "$chunks_dir"/*.md; do
+        [ -f "$chunk" ] || continue
+        cn=$(basename "$chunk")
+        if ! printf '%s\n' "$indexed" | grep -Fxq -- "$cn"; then
+            missing=$((missing + 1))
+            printf 'index-mismatch: %s (chunk 未被搜索索引收录)\n' "${chunk#$MEMORY_BASE/}" >> "$issues_tmp"
+        fi
+    done
+    echo "$missing"
+}
+
+# 扫描单个记忆，输出行 "name|tag|score|grade|broken|stale|orphan|placeholder|mismatch"
+# 详情（issues）追加到 $issues_tmp 文件（命令替换会开子壳，数组/计数器副作用
+# 无法逃逸 —— 改走文件传递，规避 v2.3 同类 subshell 陷阱）
+_drift_scan_memory() {
+    local dir="$1" tag="$2" is_global="$3" stale_days="$4" issues_tmp="$5"
+    local name=$(basename "$dir")
+    local broken=0 stale=0 orphan=0 placeholder=0 mismatch=0
+
+    # L4 健康（仅项目记忆）
+    if [ "$is_global" = false ] && [ -d "$dir/.claude" ]; then
+        local res b
+        res=$(check_l4_health "$dir/.claude" 2>/dev/null)
+        b=$(echo "$res" | cut -d' ' -f2)
+        b=${b:-0}
+        if [ "$b" -gt 0 ]; then
+            broken=$b
+            printf 'broken-l4: %s.claude (%d 个失效链接)\n' "${dir#$MEMORY_BASE/}" "$b" >> "$issues_tmp"
+        fi
+    fi
+
+    # chunk 级扫描
+    local chunk src
+    for chunk in "$dir/chunks"/*.md; do
+        [ -f "$chunk" ] || continue
+        # orphan: source_file 非空且指向的文件不存在
+        src=$(grep '^source_file: ' "$chunk" 2>/dev/null | head -1 | sed 's/^source_file: //')
+        if [ -n "$src" ] && [ "$src" != '""' ] && [ ! -f "$src" ]; then
+            orphan=$((orphan + 1))
+            printf 'orphan: %s → %s (源文件已删)\n' "${chunk#$MEMORY_BASE/}" "$src" >> "$issues_tmp"
+        fi
+        # stale: mtime 超过阈值
+        if [ -n "$(find "$chunk" -mtime +"$stale_days" 2>/dev/null)" ]; then
+            stale=$((stale + 1))
+            printf 'stale: %s (mtime 超过 %dd)\n' "${chunk#$MEMORY_BASE/}" "$stale_days" >> "$issues_tmp"
+        fi
+        # placeholder: 未经 AI 浓缩
+        if grep -qF '[待AI补充' "$chunk" 2>/dev/null; then
+            placeholder=$((placeholder + 1))
         fi
     done
 
-    local total_issues=$((broken_l4 + stale_chunks + orphan_chunks))
+    # 索引缺失
+    mismatch=$(_count_unindexed_chunks "$name" "$dir/chunks" "$is_global" "$issues_tmp")
+
+    local penalty=$((broken*8 + orphan*8 + stale*4 + mismatch*4 + placeholder*2))
+    local score=$((100 - penalty))
+    [ "$score" -lt 0 ] && score=0
+    local grade=$(_drift_grade "$score")
+
+    echo "$name|$tag|$score|$grade|$broken|$stale|$orphan|$placeholder|$mismatch"
+}
+
+drift_report() {
+    local stale_days="${MCM_DRIFT_STALE_DAYS:-30}"
+    local -a rows=()
+    local -a issues=()
+    local issues_tmp
+    issues_tmp=$(mktemp -t mcm-drift-XXXXXX)
+
+    # 项目记忆
+    local tag dir
+    for tag in $(get_project_tags 2>/dev/null); do
+        [ ! -d "$PROJECTS_DIR/$tag" ] && continue
+        for dir in "$PROJECTS_DIR/$tag"/*/; do
+            [ -d "$dir" ] || continue
+            dir="${dir%/}"
+            [[ "$dir" == */.canary/* ]] && continue
+            rows+=("$(_drift_scan_memory "$dir" "$tag" false "$stale_days" "$issues_tmp")")
+        done
+    done
+
+    # 全局记忆（无 L4）
+    local mode
+    for mode in $(get_global_modes 2>/dev/null); do
+        [ ! -d "$GLOBAL_DIR/$mode" ] && continue
+        for dir in "$GLOBAL_DIR/$mode"/*/; do
+            [ -d "$dir" ] || continue
+            dir="${dir%/}"
+            [[ "$dir" == */.canary/* ]] && continue
+            rows+=("$(_drift_scan_memory "$dir" "$mode" true "$stale_days" "$issues_tmp")")
+        done
+    done
+
+    # 收集 issues（helper 写到临时文件，规避子壳陷阱）
+    if [ -s "$issues_tmp" ]; then
+        while IFS= read -r line; do
+            [ -n "$line" ] && issues+=("$line")
+        done < "$issues_tmp"
+    fi
+    rm -f "$issues_tmp"
+
+    # 从 rows 派生计数器（避免 helper 子壳副作用）
+    local mem_count=${#rows[@]}
+    local total_score=0 row
+    for row in "${rows[@]}"; do
+        local sc
+        sc=$(printf '%s' "$row" | cut -d'|' -f3)
+        total_score=$((total_score + ${sc:-0}))
+    done
+
+    local fleet_avg=0
+    if [ "$mem_count" -gt 0 ]; then
+        fleet_avg=$(awk -v t="$total_score" -v n="$mem_count" 'BEGIN{printf "%.1f", t/n}')
+    fi
+    local fleet_grade
+    if [ "$mem_count" -gt 0 ]; then
+        fleet_grade=$(_drift_grade "${fleet_avg%.*}")
+    else
+        fleet_grade="-"
+    fi
+    local total_issues=${#issues[@]}
+
+    # ---------- JSON 输出 ----------
+    if [ "$JSON_OUTPUT" = true ]; then
+        $PYTHON -c "
+import json, sys
+rows = sys.argv[1].split('\\n') if sys.argv[1] else []
+issues = sys.argv[2].split('\\n') if sys.argv[2] else []
+memories = []
+for r in rows:
+    if not r: continue
+    p = r.split('|')
+    if len(p) < 9: continue
+    memories.append({
+        'name': p[0], 'tag': p[1], 'score': int(p[2]), 'grade': p[3],
+        'broken_l4': int(p[4]), 'stale': int(p[5]), 'orphan': int(p[6]),
+        'placeholder': int(p[7]), 'index_mismatch': int(p[8]),
+    })
+data = {
+    'drift': {
+        'stale_days': int(sys.argv[3]),
+        'fleet_avg': float(sys.argv[4]),
+        'fleet_grade': sys.argv[5],
+        'memory_count': int(sys.argv[6]),
+        'total_issues': int(sys.argv[7]),
+        'memories': memories,
+        'issues': [i for i in issues if i],
+    }
+}
+print(json.dumps(data, indent=2, ensure_ascii=False))
+" "$(IFS=$'\n'; echo "${rows[*]}")" \
+  "$(IFS=$'\n'; echo "${issues[*]}")" \
+  "$stale_days" "$fleet_avg" "$fleet_grade" "$mem_count" "$total_issues"
+        return
+    fi
+
+    # ---------- 文本输出 ----------
     echo ""
-    echo "## Drift 报告 (v3.2 雏形 — 仅清单，不评分)"
+    echo "## Drift 报告 (v3.3 — 评分制)"
     echo ""
-    echo "阈值: stale > ${stale_days} 天 (MCM_DRIFT_STALE_DAYS 可调)"
+    echo "阈值: stale > ${stale_days}d  |  扣分: L4×8 orphan×8 stale×4 mismatch×4 placeholder×2"
     echo ""
-    echo "- 失效 L4 链接: $broken_l4"
-    echo "- 陈旧 chunk (>${stale_days}d): $stale_chunks"
-    echo "- 孤儿 chunk (源文件已删): $orphan_chunks"
+
+    if [ "$mem_count" -eq 0 ]; then
+        echo "无记忆，跳过 drift 评分。"
+        return
+    fi
+
+    echo "| 记忆 | 标签 | 分数 | 等级 | L4 | stale | orphan | 占位 | 索引缺失 |"
+    echo "|------|------|------|------|----|----|--------|------|----------|"
+    local row
+    for row in "${rows[@]}"; do
+        IFS='|' read -r n t sc gr br st or ph mm <<< "$row"
+        echo "| $n | $t | $sc | $gr | $br | $st | $or | $ph | $mm |"
+    done
+    echo ""
+    echo "**舰队均值**: ${fleet_avg}/100 (${fleet_grade})  ·  共 ${mem_count} 个记忆"
     echo ""
 
     if [ "$total_issues" -eq 0 ]; then
         echo "✓ 无 drift 信号"
     else
-        echo "详情:"
+        echo "详情 (${total_issues} 项):"
         local issue
         for issue in "${issues[@]}"; do
             echo "  - $issue"
         done
         echo ""
-        echo "提示: mcmDoctor --fix 可清理部分问题；评分制在 Phase 3"
+        echo "提示: mcmDoctor --fix 可清理部分问题；mcmMark --evidence validated 可提升 chunk 权重"
     fi
 }
 

@@ -30,6 +30,7 @@ allowed-tools: ["Bash", "Read", "Write", "Grep"]
 | `mcmInjectLog [--tail N]` | 查看自动注入事件日志 | [commands/inject-log.sh](commands/inject-log.sh) |
 | `mcmJournal <文本>` | 一行命令追加会话笔记（PreCompact 时归档为 L3 chunk） | [commands/journal.sh](commands/journal.sh) |
 | `mcmDoctor [--fix]` | 健康检查 + 自动迁移脏 tag 目录 + 占位 chunk 报告 | [commands/doctor.sh](commands/doctor.sh) |
+| `mcmMark <名称>` | 标注 chunk 来源/证据等级（source/evidence → BM25 权重） | [commands/mark.sh](commands/mark.sh) |
 
 ## 公共参数
 
@@ -72,6 +73,7 @@ mcmInjectLog --json
 
 注入策略:
 - **BM25 评分** (v2.4/v3.1): 标准 BM25 (k1=1.2, b=0.75) + Robertson IDF + 中英文关键词提取；header 命中权重 ×3
+- **证据/来源分层** (v3.3): `final_score = bm25 × source_w × evidence_w`，per memory 取 best evidence wins。`source: user=1.0/agent=0.7/system=0.5`，`evidence: validated=1.0/observed=0.85/hypothesis=0.6`。AI 浓缩内容默认 `agent/observed=0.595` 折扣防幻觉；`mcmMark --source user --evidence validated` 提升已验证知识至 1.0
 - **冷却机制**: 同一记忆 120 秒内不重复注入
 - **相关性阈值**: BM25 score ≥ `INJECT_BM25_MIN_SCORE`（默认 0，即任何正分；可调）
 - **长度控制**: 单次注入最多 3 个记忆，总内容受 token 预算限制
@@ -132,6 +134,12 @@ mcmInjectLog --json
    - 目标长度：源文件的 10-30%
    - 保持 Markdown 格式，包含代码块
 6. 使用 `Edit` 工具原地更新 chunk 文件
+7. **(v3.3)** AI 浓缩的 chunk 默认 frontmatter 带 `source: agent` / `evidence: observed`（0.595 折扣防幻觉）。若该 chunk 内容来自用户明确确认的决策，可改标 `source: user` / `evidence: validated` 提升其在自动注入中的权重：
+   ```bash
+   mcmMark <名称> --source user --evidence validated          # 整个记忆所有 chunk
+   mcmMark <名称> --chunk 1_ARCHITECTURE --evidence validated # 仅指定 chunk
+   ```
+   反之，对猜测性/未验证的内容可降为 `evidence: hypothesis`（0.6）以降低注入优先级。
 
 ## 加载策略
 
@@ -193,4 +201,4 @@ pre-compact.sh hook 会在压缩前自动:
 
 ---
 
-*版本: v3.2 | op-log | STOP kill-switch | drift 报告 | doctor canary | BM25 注入 | NDJSON 事件总线 | .workspace 标记(B2) | 单一 BM25 评分(B5) | 动态标签 | 并发锁 | 回收站 | 相对路径 | 搜索索引 | 会话压缩 | 2026-07-04*
+*版本: v3.3 | drift 100 点评分 | 证据/来源分层 (source/evidence → BM25 权重) | mcmMark | op-log | STOP kill-switch | doctor canary | BM25 注入 | NDJSON 事件总线 | .workspace 标记(B2) | 单一 BM25 评分(B5) | 动态标签 | 并发锁 | 回收站 | 相对路径 | 搜索索引 | 会话压缩 | 2026-07-04*

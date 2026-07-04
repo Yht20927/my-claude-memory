@@ -203,6 +203,8 @@ with open(path, 'w') as f:
 source_file: $source
 last_sync: $mtime
 hash: $hash
+source: agent
+evidence: observed
 ---
 
 # $(basename "$source")
@@ -338,6 +340,8 @@ main() {
 ---
 source_file: ""
 created: $(date '+%Y-%m-%d')
+source: agent
+evidence: observed
 ---
 
 # $MEMORY_NAME

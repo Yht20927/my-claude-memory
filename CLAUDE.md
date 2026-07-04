@@ -6,6 +6,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 mcMemory (mcm) is a Claude Code skill that implements a hierarchical memory management system in pure Bash (v3.2). It persists project and personal knowledge to `~/.claude/mcMemories/` so AI context survives across sessions.
 
+## v3.3 fixes (2026-07-04) — 评分制 + 证据分层（Phase 3）
+
+- **drift 评分制 (mex 风格)**: `mcmStatus --drift` 从清单升级为 100 点评分。每个记忆独立打分，扣分项：broken L4 ×8 / orphan chunk ×8 / 陈旧 chunk ×4 / 索引缺失 ×4 / 占位 chunk ×2。等级 A(≥95) B(≥80) C(≥60) D(≥40) F(<40)。新增**索引缺失**信号（chunk 存在但未被 `$SEARCH_INDEX` 收录 → 搜索召回不到，比 orphan 更隐蔽）。`--drift --json` 输出 per-memory 分数 + issues 数组。修了 v3.2 雏形的 subshell 陷阱（helper 在 `$(...)` 内 `issues+=` 失效 → 改走临时文件传递）。
+- **证据/来源分层 (eidetic 风格)**: chunk frontmatter 新增 `source` (user=1.0/agent=0.7/system=0.5) + `evidence` (validated=1.0/observed=0.85/hypothesis=0.6) 字段。搜索索引每个 section header 后插 `<!-- mcm-meta source=X evidence=Y -->` 元数据行。`find_relevant_memories` 解析后 `final_score = bm25 × max_weight`（per memory 取 best evidence wins），缺省 agent×observed=0.595 折扣防幻觉。`source:agent` 自引用默认折扣，user/validated 提升至 1.0。旧索引（无 meta 行）按缺省 0.595 处理，向后兼容。
+- **mcmMark 命令**: `mcmMark <名称> [--chunk <名>] [--source ...] [--evidence ...] [--global]` 人工标注 chunk 来源/证据等级，批量改 frontmatter + 重建索引段 + op-log。防幻觉的核心杠杆：已验证知识提升权重，猜测性内容降级。
+- 测试: +16 断言（drift 评分/索引缺失/meta 行/权重排序/mcmMark/向后兼容六组），总计 148 项。
+
 ## v3.2 fixes (2026-07-04) — 可观测性补全（Phase 2）
 
 - **op-log 记忆级操作日志**: `log_memory_op()` 追加 `## [ISO8601] op (actor)` 到 `<memory>/log.md`；init/sync/update/delete/restore/import/inject/precompact 8 个写操作接入。`grep '^## \[' log.md` 即时间线。与 NDJSON 事件总线（命令级）互补：op-log 按记忆隔离、grep 友好。
@@ -149,13 +156,14 @@ All `$PYTHON -c "..."` calls in v2.0 pass file paths through `sys.argv` instead 
 | `mcmLoad` | Load memory into session context |
 | `mcmSearch` | Full-text search (uses search index) |
 | `mcmList` | List all registered memories |
-| `mcmStatus` | Health overview, freshness, trash status |
+| `mcmStatus` | Health overview, freshness, trash status; `--drift` 100-point drift scoring (v3.3) |
 | `mcmUpdate` | Update name/description/tags (tags now work) |
 | `mcmDelete` | Move to trash |
 | `mcmExport` | Export memory as tar.gz |
 | `mcmImport` | Import from tar.gz archive |
 | `mcmRestore` | Restore from trash |
 | `mcmEmptyTrash` | Permanently empty trash |
+| `mcmMark` | Mark chunk source/evidence → BM25 weight (v3.3) |
 
 Common flags: `--global`, `--json` (list/search/status), `--expand` (search), `--force` (delete/empty-trash).
 

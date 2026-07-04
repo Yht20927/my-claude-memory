@@ -159,6 +159,8 @@ ensure_canary() {
 source_file: ""
 created: $(date '+%Y-%m-%d')
 type: canary
+source: agent
+evidence: validated
 ---
 
 # canary

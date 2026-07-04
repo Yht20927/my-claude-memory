@@ -98,10 +98,16 @@ it_drift_reports_orphan_and_broken_l4() {
     MCM_DRIFT_STALE_DAYS=30 bash "$PROJECT_DIR/commands/status.sh" --drift > /tmp/drift.out 2>&1
     local out
     out=$(cat /tmp/drift.out)
+    # v3.3: 评分制报告（100 点 + 等级 + 详情列表）
     assert_not_contains "无 drift 信号" "$out" "drift 报告检测到问题"
-    assert_contains "孤儿 chunk" "$out" "drift 报告含 orphan 统计"
-    assert_contains "失效 L4 链接" "$out" "drift 报告含 broken L4 统计"
-    assert_contains "orphan:" "$out" "drift 报告列 orphan 详情"
+    assert_contains "broken-l4:" "$out" "drift 详情含 broken-l4"
+    assert_contains "orphan:" "$out" "drift 详情列 orphan"
+    assert_contains "stale:" "$out" "drift 详情列 stale"
+    assert_contains "评分制" "$out" "drift 报告为 v3.3 评分制"
+    # 分数应低于 100（broken+orphan+stale+placeholder 扣分）
+    local score
+    score=$(printf '%s' "$out" | grep -oE '\| [0-9]+ \|' | head -1 | grep -oE '[0-9]+')
+    [ -n "$score" ] && assert_ge 99 "$score" "drift 分数 < 100 (实得 $score)"
 }
 
 # ----------------------------------------------------------------------------
