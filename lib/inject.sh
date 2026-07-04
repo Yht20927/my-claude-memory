@@ -20,6 +20,9 @@ INJECT_PAUSE_FILE="${MEMORY_BASE:-$HOME/.claude/mcMemories}/.paused_until"
 MAX_INJECT_TOKENS_ESTIMATE="${MAX_INJECT_TOKENS_ESTIMATE:-2000}"
 MAX_INJECT_MEMORIES="${MAX_INJECT_MEMORIES:-3}"
 INJECT_COOLDOWN_SEC="${INJECT_COOLDOWN_SEC:-120}"
+# B5 (v3.1): BM25 注入门槛。find_relevant_memories 只返回 score>0 的记忆，
+# 此处设门槛过滤极弱匹配。0 = 接受任何正分（依赖 top-N + cooldown 节流）。
+INJECT_BM25_MIN_SCORE="${INJECT_BM25_MIN_SCORE:-0}"
 
 # ----------------------------------------------------------------------------
 # pause 检查：若 .paused_until 存在且时间戳未过期，返回 0（已暂停）
@@ -226,8 +229,10 @@ for mem in memory_names:
     scores[mem] = score
 
 sorted_mems = sorted(scores.items(), key=lambda x: x[1], reverse=True)
-for mem, _ in sorted_mems[:max_items]:
-    print(mem)
+# B5 (v3.1): 输出 "name<TAB>score"，让 prompt_submit 直接用 BM25 score 过门槛，
+# 不再在调用方用 grep 二次打分（旧 0/3/1 双评分系统已下线）。
+for mem, sc in sorted_mems[:max_items]:
+    print(f"{mem}\t{sc:.4f}")
 PY
 }
 
@@ -399,10 +404,14 @@ prompt_submit_inject() {
 
     [ ${#keywords[@]} -eq 0 ] && return
 
-    # 查找相关记忆
+    # 查找相关记忆（B5: 直接用 BM25 score，不再二次 grep 打分）
+    # find_relevant_memories 输出 "name<TAB>score" 每行一条，已按 BM25 降序。
     local relevant=()
-    while IFS= read -r mem; do
-        [ -n "$mem" ] && relevant+=("$mem")
+    declare -A mem_score=()
+    while IFS=$'\t' read -r mem score; do
+        [ -n "$mem" ] || continue
+        relevant+=("$mem")
+        mem_score["$mem"]="${score:-0}"
     done < <(find_relevant_memories "${keywords[@]}")
 
     [ ${#relevant[@]} -eq 0 ] && return
@@ -419,31 +428,18 @@ prompt_submit_inject() {
             continue
         fi
 
+        # B5: 用 BM25 score 过门槛，替换旧 grep 0/3/1 双评分系统。
+        # 旧实现把 find_relevant_memories 的 BM25 score 丢弃后再 grep 重打分，
+        # 两套评分叠加会漂移；现统一为单一 BM25 评分。浮点比较交给 awk。
+        local score="${mem_score[$mem]:-0}"
+        if ! awk -v s="$score" -v m="$INJECT_BM25_MIN_SCORE" 'BEGIN{exit !(s+0 >= m+0)}'; then
+            continue
+        fi
+
         # 查找记忆路径
         local mem_path=$(find_memory_path "$mem" false 2>/dev/null)
         [ -z "$mem_path" ] && mem_path=$(find_memory_path "$mem" true 2>/dev/null)
         [ -z "$mem_path" ] && continue
-
-        # 计算相关性分数（v2.4 修复）:
-        # 旧实现仅在 summary.md 上匹配关键词，但 summary 通常只含项目名+描述，
-        # 几乎从不命中正文关键词 → score=0<2，导致 inject 实际上永不触发。
-        # 新策略：summary 命中给 3×（高信号），chunks 任意文件命中给 1×（保底），
-        # 同时设上限避免单一长 chunk 主导得分。
-        local score=0
-        for kw in "${keywords[@]}"; do
-            [ ${#kw} -lt 2 ] && continue
-            if grep -iqF "$kw" "$mem_path/summary.md" 2>/dev/null; then
-                score=$((score + 3))
-            elif [ -d "$mem_path/chunks" ] && \
-                 grep -riqF "$kw" "$mem_path/chunks" 2>/dev/null; then
-                score=$((score + 1))
-            fi
-            # 单 prompt 最多累计 12 分，避免极长 prompt 拉满
-            [ "$score" -ge 12 ] && break
-        done
-
-        # 门槛：至少 2 分（1 个 summary 命中或 2 个 chunk 命中）
-        [ "$score" -lt 2 ] && continue
 
         output+=$(format_injection "$mem" "$mem_path" "$score")
         mark_injected "$mem"

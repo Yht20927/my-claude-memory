@@ -507,6 +507,13 @@ IDX_EOF
         assert_true "false" "api_project 不是第一：$(echo "$result" | head -1)"
     fi
 
+    # B5 (v3.1): 输出格式应为 name<TAB>score，prompt_submit 据此过门槛
+    if echo "$result" | head -1 | grep -qE '^api_project[[:space:]][0-9]'; then
+        assert_true "true" "B5: 输出含 BM25 score (name<TAB>score)"
+    else
+        assert_true "false" "B5: 首行非 name<TAB>score 格式: $(echo "$result" | head -1)"
+    fi
+
     teardown
 }
 
