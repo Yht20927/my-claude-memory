@@ -33,6 +33,7 @@ run_suite "Unit tests"              "$TEST_DIR/test_core.sh"
 run_suite "Integration: hook e2e"   "$TEST_DIR/integration/test_hook_e2e.sh"
 run_suite "Integration: sync"       "$TEST_DIR/integration/test_sync_idempotent.sh"
 run_suite "Integration: concurrent" "$TEST_DIR/integration/test_concurrent.sh"
+run_suite "Integration: export/import" "$TEST_DIR/integration/test_export_import.sh"
 
 echo ""
 echo "=========================================="
