@@ -307,6 +307,15 @@ main() {
     fi
     log "  Created memory structure: $memory_path"
 
+    # B2 修复 (v3.1): 记录 workspace origin，让后续 mcmSync / PreCompact /
+    # session_start（不带 --name 时）能凭标记找到 --name 与目录名不同的项目记忆。
+    # 仅项目记忆需要（全局记忆不绑定 workspace）。
+    if [ "$IS_GLOBAL" = false ]; then
+        local _ws_origin
+        _ws_origin=$(git -C "$WORKSPACE_DIR" rev-parse --show-toplevel 2>/dev/null || resolve_path "$WORKSPACE_DIR")
+        [ -n "$_ws_origin" ] && printf '%s\n' "$_ws_origin" > "$memory_path/.workspace"
+    fi
+
     # 创建 summary.md（写入完整 tags 字符串，便于多 tag 检索）
     generate_summary_md "$MEMORY_NAME" "$DESCRIPTION" "$TAGS" > "$memory_path/summary.md"
 

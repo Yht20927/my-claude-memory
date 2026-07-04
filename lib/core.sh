@@ -716,48 +716,59 @@ parse_primary_tag() {
 }
 
 # ============================================================================
-# 查找项目记忆目录（通过 git root 名称）
+# 查找项目记忆目录
+# ----------------------------------------------------------------------------
+# B2 修复 (v3.1): 旧实现只用 basename(git toplevel) 推名字，完全忽略
+# mcmInit --name，导致自定义命名项目的 mcmSync / PreCompact / session_start
+# 找不到记忆目录而静默失败（PreCompact 失败时 session_notes.md 不被清空，
+# 会话笔记可能丢失）。集成测试曾靠"目录名 = --name"绕过此 bug。
+#
+# 新查找顺序（任一命中即返回）：
+#   1. 显式 name（调用方传入，如 mcmSync --name FOO）→ 按名遍历所有 tag 直查
+#   2. .workspace 标记扫描：匹配 mcmInit 时记录的 workspace origin（git root
+#      或非 git 的 abs 路径），支持 --name 与目录名不同的项目
+#   3. 回退：git root basename 启发式（兼容 B2 修复前创建、无 .workspace 标记的旧记忆）
 # ============================================================================
-
 find_project_memory_dir() {
     local workspace="$1"
-    local project_name=$(basename "$(git -C "$workspace" rev-parse --show-toplevel 2>/dev/null)" 2>/dev/null)
+    local name="${2:-}"
 
-    if [ -z "$project_name" ]; then
-        echo ""
-        return
+    # 1. 显式 name → 直接按名查（遍历所有 tag）
+    if [ -n "$name" ]; then
+        for tag in $(get_project_tags); do
+            local dir="$PROJECTS_DIR/$tag/$name"
+            [ -d "$dir" ] && { echo "$dir"; return; }
+        done
     fi
 
-    for tag in $(get_project_tags); do
-        local dir="$PROJECTS_DIR/$tag/$project_name"
-        if [ -d "$dir" ]; then
-            echo "$dir"
-            return
-        fi
-    done
-
-    echo ""
-}
-
-# ============================================================================
-# 通过 git root 查找项目记忆的 tag
-# ============================================================================
-
-find_project_tag() {
-    local workspace="$1"
-    local project_name=$(basename "$(git -C "$workspace" rev-parse --show-toplevel 2>/dev/null)" 2>/dev/null)
-
-    if [ -z "$project_name" ]; then
-        echo ""
-        return
+    # 2. .workspace 标记扫描：匹配 init 时记录的 workspace origin
+    local ws_root
+    ws_root=$(git -C "$workspace" rev-parse --show-toplevel 2>/dev/null || resolve_path "$workspace")
+    if [ -n "$ws_root" ] && [ -d "$PROJECTS_DIR" ]; then
+        local tag_dir d marker
+        for tag_dir in "$PROJECTS_DIR"/*/; do
+            [ -d "$tag_dir" ] || continue
+            for d in "$tag_dir"*/; do
+                [ -d "$d" ] || continue
+                marker="${d}.workspace"
+                [ -f "$marker" ] || continue
+                if [ "$(cat "$marker" 2>/dev/null)" = "$ws_root" ]; then
+                    echo "${d%/}"
+                    return
+                fi
+            done
+        done
     fi
 
-    for tag in $(get_project_tags); do
-        if [ -d "$PROJECTS_DIR/$tag/$project_name" ]; then
-            echo "$tag"
-            return
-        fi
-    done
+    # 3. 回退：git root basename 启发式（兼容无 .workspace 标记的旧记忆）
+    local project_name
+    project_name=$(basename "$(git -C "$workspace" rev-parse --show-toplevel 2>/dev/null)" 2>/dev/null)
+    if [ -n "$project_name" ]; then
+        for tag in $(get_project_tags); do
+            local dir="$PROJECTS_DIR/$tag/$project_name"
+            [ -d "$dir" ] && { echo "$dir"; return; }
+        done
+    fi
 
     echo ""
 }

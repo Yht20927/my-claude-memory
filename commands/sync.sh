@@ -230,7 +230,9 @@ main() {
             exit 1
         fi
     else
-        memory_dir=$(find_project_memory_dir "$WORKSPACE_DIR")
+        # B2 修复 (v3.1): 把 --name 透传给查找函数；未给 --name 时
+        # find_project_memory_dir 会走 .workspace 标记扫描 + basename 回退。
+        memory_dir=$(find_project_memory_dir "$WORKSPACE_DIR" "$MEMORY_NAME")
         if [ -z "$memory_dir" ]; then
             log "未找到项目记忆，请先运行 mcmInit"
             exit 1

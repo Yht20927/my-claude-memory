@@ -15,12 +15,11 @@ source "$SCRIPT_DIR/_lib.sh"
 source "$PROJECT_DIR/lib/core.sh"
 
 # 准备一个最小的 workspace（CLAUDE.md + package.json）然后 init
-# 注意：sync 通过 git root basename 找项目记忆（见 lib/core.sh:722 find_project_memory_dir，
-# 这是 §B2 列出的已知 bug，本 PR 不修），所以 fixture 必须满足:
-#   - workspace 是 git repo（否则 git rev-parse 失败 → project_name 空）
-#   - workspace 目录名 = init 时的 --name（否则 sync 找不到该项目）
+# B2 已修复 (v3.1): find_project_memory_dir 现在按 .workspace 标记 + basename
+# 回退查找，不再强制要求"目录名 = --name"。此处仍用 int-fixture 仅为历史惯例；
+# 自定义命名场景由 it_sync_finds_custom_named_project 单独覆盖。
 _seed_workspace_and_init() {
-    local ws="$INT_FIXTURE_DIR/int-fixture"   # 名字必须与 --name 匹配
+    local ws="$INT_FIXTURE_DIR/int-fixture"
     mkdir -p "$ws"
     ( cd "$ws" && git init -q && git config user.email t@x && git config user.name t )
     cat > "$ws/CLAUDE.md" <<'EOF'
@@ -139,11 +138,44 @@ it_sync_releases_lock_on_normal_exit() {
 }
 
 # ----------------------------------------------------------------------------
+it_sync_finds_custom_named_project() {
+    # B2 回归：workspace 目录名 ≠ --name 时，sync 仍能凭 .workspace 标记找到记忆
+    local ws="$INT_FIXTURE_DIR/custom-ws-dir"   # 目录名 ≠ --name
+    mkdir -p "$ws"
+    ( cd "$ws" && git init -q && git config user.email t@x && git config user.name t )
+    cat > "$ws/CLAUDE.md" <<'EOF'
+# Custom Named Project
+## Architecture
+B2 regression fixture.
+EOF
+    bash "$PROJECT_DIR/commands/init.sh" \
+        --name "my-custom-name" \
+        --tags "tools" \
+        --description "B2 regression fixture" \
+        --workspace "$ws" > /tmp/init_b2.out 2>&1
+
+    # 记忆应建在 my-custom-name 下（而非目录名 custom-ws-dir）
+    local mem_dir="$PROJECTS_DIR/tools/my-custom-name"
+    assert_file_exists "$mem_dir/hash.json" "init 用 --name 建目录（非目录名）"
+    assert_file_exists "$mem_dir/.workspace" "init 写 .workspace 标记"
+    assert_contains "custom-ws-dir" "$(cat "$mem_dir/.workspace" 2>/dev/null)" \
+        ".workspace 标记指向正确 workspace"
+
+    # sync 不带 --name，应通过 .workspace 标记找到记忆（而非 basename 启发式）
+    bash "$PROJECT_DIR/commands/sync.sh" --workspace "$ws" > /tmp/sync_b2.out 2>&1
+    local sync_exit=$?
+    assert_equal "0" "$sync_exit" "B2: 自定义名项目 sync 退出码 0"
+    assert_not_contains "未找到项目记忆" "$(cat /tmp/sync_b2.out)" "B2: sync 找到自定义名项目"
+    assert_contains "无变化" "$(cat /tmp/sync_b2.out)" "B2: sync 幂等"
+}
+
+# ----------------------------------------------------------------------------
 IT_LIST=(
     "init then immediate sync is idempotent"  it_init_then_sync_no_changes
     "sync detects source change"              it_sync_detects_source_change
     "sync emits paired cmd.start/cmd.end"     it_sync_emits_cmd_events
     "sync releases lock on normal exit"       it_sync_releases_lock_on_normal_exit
+    "B2: sync finds custom-named project"     it_sync_finds_custom_named_project
 )
 
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then
