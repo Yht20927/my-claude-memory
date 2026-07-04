@@ -16,6 +16,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LIB_DIR="$(dirname "$SCRIPT_DIR")/lib"
 source "$LIB_DIR/core.sh"
+source "$LIB_DIR/inject.sh"   # v3.2: doctor canary 用 find_relevant_memories 端到端验证搜索
 
 DO_FIX=false
 JSON_OUTPUT=false
@@ -133,6 +134,55 @@ count_placeholders() {
 }
 
 # ----------------------------------------------------------------------------
+# v3.2 Phase 2: Canary 探针 — 端到端验证搜索管线
+# ----------------------------------------------------------------------------
+# 在 $GLOBAL_DIR/.canary/ 隐藏 dotdir 下放一个含唯一 token 的探针记忆：
+#   - get_global_modes() 用 */ 扫描，跳过 dotdir → 不污染 mcmStatus
+#   - mcmList 读 index.md，canary 不入 index → 不污染 mcmList
+#   - rebuild_search_index 的 find 会扫到 → 进搜索索引 → 可被 find_relevant_memories 命中
+# doctor 确保 canary 存在+已索引，然后查 token 断言命中。
+# 未命中 = 索引损坏 / BM25 管线异常 → 建议重建索引。
+CANARY_TOKEN="__MCM_CANARY_v3_2_TOKEN__"
+CANARY_MEM_NAME="_mcm_canary"
+CANARY_MEM_DIR="$GLOBAL_DIR/.canary/$CANARY_MEM_NAME"
+
+ensure_canary() {
+    mkdir -p "$CANARY_MEM_DIR/chunks"
+    if [ ! -f "$CANARY_MEM_DIR/summary.md" ]; then
+        printf '# %s\nmcmDoctor 端到端探针（勿删；可被 mcmDoctor 重建）\n' "$CANARY_MEM_NAME" \
+            > "$CANARY_MEM_DIR/summary.md"
+    fi
+    local chunk="$CANARY_MEM_DIR/chunks/1_canary.md"
+    if [ ! -f "$chunk" ] || ! grep -qF "$CANARY_TOKEN" "$chunk" 2>/dev/null; then
+        cat > "$chunk" <<EOF
+---
+source_file: ""
+created: $(date '+%Y-%m-%d')
+type: canary
+---
+
+# canary
+
+$CANARY_TOKEN
+EOF
+    fi
+    # 确保探针在搜索索引中（幂等：remove + append）
+    update_search_index "$CANARY_MEM_NAME" "$CANARY_MEM_DIR" true
+}
+
+# 返回 0 = canary 命中（管线正常）；1 = 未命中（索引可能损坏）
+check_canary() {
+    ensure_canary
+    local result
+    result=$(find_relevant_memories "$CANARY_TOKEN" 2>/dev/null)
+    if printf '%s' "$result" | grep -qF "$CANARY_MEM_NAME"; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+# ----------------------------------------------------------------------------
 # 主函数
 # ----------------------------------------------------------------------------
 
@@ -153,6 +203,12 @@ main() {
     local global_placeholders
     global_placeholders=$(count_placeholders "$GLOBAL_DIR")
 
+    # v3.2: canary 端到端搜索管线验证
+    local canary_ok="false"
+    if check_canary; then
+        canary_ok="true"
+    fi
+
     if [ "$JSON_OUTPUT" = true ]; then
         $PYTHON -c "
 import json, sys
@@ -164,11 +220,12 @@ data = {
         'global': int(sys.argv[4]),
     },
     'fix_applied': sys.argv[5] == 'true',
+    'canary': {'ok': sys.argv[6] == 'true'},
 }
 print(json.dumps(data, indent=2, ensure_ascii=False))
 " "$(IFS='|'; echo "${dirty_project_tags[*]}")" \
   "$(IFS='|'; echo "${dirty_global_tags[*]}")" \
-  "$project_placeholders" "$global_placeholders" "$DO_FIX"
+  "$project_placeholders" "$global_placeholders" "$DO_FIX" "$canary_ok"
         return
     fi
 
@@ -227,6 +284,15 @@ print(json.dumps(data, indent=2, ensure_ascii=False))
         echo "  - project: $project_placeholders"
         echo "  - global:  $global_placeholders"
         echo "  提示: 让 AI 读取对应 source_file 并替换 [待AI补充：...] 占位符"
+    fi
+
+    echo ""
+    # 检查项 3 (v3.2): canary 端到端搜索管线验证
+    if [ "$canary_ok" = true ]; then
+        echo "✓ 搜索管线正常（canary 命中）"
+    else
+        echo "✗ 搜索管线异常：canary 未被命中"
+        echo "  索引可能损坏。建议: 运行 mcmSync 或重建索引"
     fi
 }
 

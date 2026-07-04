@@ -18,14 +18,16 @@ LIB_DIR="$(dirname "$SCRIPT_DIR")/lib"
 source "$LIB_DIR/core.sh"
 
 JSON_OUTPUT=false
+DRIFT_MODE=false
 WORKSPACE="${MCM_WORKSPACE:-$(pwd)}"
 
 parse_args() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --json) JSON_OUTPUT=true; shift ;;
+            --drift) DRIFT_MODE=true; shift ;;
             --workspace) WORKSPACE="$2"; shift 2 ;;
-            --help) usage "用法: mcmStatus [--json] [--workspace PATH]" ;;
+            --help) usage "用法: mcmStatus [--json] [--drift] [--workspace PATH]" ;;
             *)      shift ;;
         esac
     done
@@ -153,11 +155,91 @@ print(f'{b:.1f}TB')
 }
 
 # ----------------------------------------------------------------------------
+# Drift 报告 (v3.2 Phase 2 雏形 — 仅清单，不评分；评分制在 Phase 3)
+# ----------------------------------------------------------------------------
+# 扫描三类信号：
+#   - broken L4 链接（复用 check_l4_health，仅项目记忆有 .claude/）
+#   - 陈旧 chunk（mtime > MCM_DRIFT_STALE_DAYS 天，默认 30）
+#   - 孤儿 chunk（frontmatter source_file 指向的文件已删；空 source 视为会话摘要/canary，跳过）
+# 排除 .canary/（mcmDoctor 的探针，非用户数据）
+# ----------------------------------------------------------------------------
+
+drift_report() {
+    local stale_days="${MCM_DRIFT_STALE_DAYS:-30}"
+    local broken_l4=0
+    local stale_chunks=0
+    local orphan_chunks=0
+    local -a issues=()
+
+    local base
+    for base in "$PROJECTS_DIR" "$GLOBAL_DIR"; do
+        [ -d "$base" ] || continue
+
+        # chunk 级扫描（排除 .canary 探针）
+        while IFS= read -r -d '' chunk; do
+            # orphan: source_file 非空且指向的文件不存在
+            local src
+            src=$(grep '^source_file: ' "$chunk" 2>/dev/null | head -1 | sed 's/^source_file: //')
+            if [ -n "$src" ] && [ "$src" != '""' ] && [ ! -f "$src" ]; then
+                orphan_chunks=$((orphan_chunks + 1))
+                issues+=("orphan: ${chunk#$MEMORY_BASE/} → $src (源文件已删)")
+            fi
+            # stale: mtime 超过阈值
+            if [ -n "$(find "$chunk" -mtime +"$stale_days" 2>/dev/null)" ]; then
+                stale_chunks=$((stale_chunks + 1))
+            fi
+        done < <(find "$base" -name "*.md" -path "*/chunks/*" ! -path "*/.canary/*" -print0 2>/dev/null)
+
+        # L4 broken（仅项目记忆）
+        if [ "$base" = "$PROJECTS_DIR" ]; then
+            while IFS= read -r -d '' l4dir; do
+                local res b
+                res=$(check_l4_health "$l4dir")
+                b=$(echo "$res" | cut -d' ' -f2)
+                if [ "${b:-0}" -gt 0 ]; then
+                    broken_l4=$((broken_l4 + b))
+                    issues+=("broken-l4: ${l4dir#$MEMORY_BASE/} ($b 个失效链接)")
+                fi
+            done < <(find "$base" -type d -name ".claude" -print0 2>/dev/null)
+        fi
+    done
+
+    local total_issues=$((broken_l4 + stale_chunks + orphan_chunks))
+    echo ""
+    echo "## Drift 报告 (v3.2 雏形 — 仅清单，不评分)"
+    echo ""
+    echo "阈值: stale > ${stale_days} 天 (MCM_DRIFT_STALE_DAYS 可调)"
+    echo ""
+    echo "- 失效 L4 链接: $broken_l4"
+    echo "- 陈旧 chunk (>${stale_days}d): $stale_chunks"
+    echo "- 孤儿 chunk (源文件已删): $orphan_chunks"
+    echo ""
+
+    if [ "$total_issues" -eq 0 ]; then
+        echo "✓ 无 drift 信号"
+    else
+        echo "详情:"
+        local issue
+        for issue in "${issues[@]}"; do
+            echo "  - $issue"
+        done
+        echo ""
+        echo "提示: mcmDoctor --fix 可清理部分问题；评分制在 Phase 3"
+    fi
+}
+
+# ----------------------------------------------------------------------------
 # 主函数
 # ----------------------------------------------------------------------------
 
 main() {
     parse_args "$@"
+
+    # v3.2: --drift 模式只出 drift 报告
+    if [ "$DRIFT_MODE" = true ]; then
+        drift_report
+        return
+    fi
 
     local project_count=0
     local global_count=0
