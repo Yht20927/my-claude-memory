@@ -237,6 +237,9 @@ main() {
         update_search_index "$final_name" "$new_path" "$is_global"
     fi
 
+    # v3.2: op-log（写最终路径；new_path 可能为空=无变更）
+    log_memory_op "${new_path:-$memory_path}" "update" "name=${NEW_NAME:-$NAME} desc=${NEW_DESCRIPTION:+set} tags=${NEW_TAGS:+set}" "user"
+
     release_lock "$lock_name" "$lock_token"
     mcm_clear_exit_handlers
 

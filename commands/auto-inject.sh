@@ -24,7 +24,7 @@ DURATION=""
 parse_args() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            on|off|status|pause|resume)
+            on|off|status|pause|resume|stop|unstop)
                 ACTION="$1"; shift
                 # pause 后面跟 duration
                 if [ "$ACTION" = "pause" ] && [ -n "$1" ] && [[ "$1" != --* ]]; then
@@ -32,7 +32,7 @@ parse_args() {
                 fi
                 ;;
             --scope)        SCOPE="$2"; shift 2 ;;
-            --help)         usage "用法: mcmAutoInject on|off|status|pause <dur>|resume [--scope project|user]" ;;
+            --help)         usage "用法: mcmAutoInject on|off|status|pause <dur>|resume|stop|unstop [--scope project|user]" ;;
             *)              shift ;;
         esac
     done
@@ -62,6 +62,7 @@ parse_duration_to_seconds() {
 # pause / resume：在 $MEMORY_BASE/.paused_until 写入"恢复时间戳"
 # ----------------------------------------------------------------------------
 PAUSE_FILE="${MEMORY_BASE:-$HOME/.claude/mcMemories}/.paused_until"
+STOP_FILE="${MEMORY_BASE:-$HOME/.claude/mcMemories}/.stop"
 
 do_pause() {
     local dur="${DURATION:-30m}"
@@ -89,6 +90,26 @@ do_resume() {
     fi
 }
 
+# ----------------------------------------------------------------------------
+# stop / unstop（v3.2 Phase 2）：全局无条件 kill-switch
+# 与 pause（带时长自动恢复）互补：STOP 需显式 unstop 取消
+# ----------------------------------------------------------------------------
+do_stop() {
+    mkdir -p "$(dirname "$STOP_FILE")"
+    date '+%Y-%m-%dT%H:%M:%S' > "$STOP_FILE"
+    echo "🛑 已全局停止自动注入（所有 hook 跳过注入，session_start/prompt_submit 均不触发）"
+    echo "  恢复: mcmAutoInject unstop"
+}
+
+do_unstop() {
+    if [ -f "$STOP_FILE" ]; then
+        rm -f "$STOP_FILE"
+        echo "已取消全局停止，自动注入恢复"
+    else
+        echo "当前未处于全局停止状态"
+    fi
+}
+
 # 在 status 中显示 pause 状态
 show_pause_status() {
     if [ ! -f "$PAUSE_FILE" ]; then
@@ -110,6 +131,18 @@ show_pause_status() {
     echo "⏸  注入已暂停"
     echo "    恢复时间: $until_str (还剩 ${remain}s)"
     echo "    立刻取消: mcmAutoInject resume"
+}
+
+# 在 status 中显示全局 STOP 状态
+show_stop_status() {
+    if [ ! -f "$STOP_FILE" ]; then
+        return
+    fi
+    local stopped_at
+    stopped_at=$(cat "$STOP_FILE" 2>/dev/null)
+    echo ""
+    echo "🛑 注入已全局停止（自 $stopped_at）"
+    echo "    所有 hook 跳过注入；恢复: mcmAutoInject unstop"
 }
 
 # ----------------------------------------------------------------------------
@@ -317,12 +350,15 @@ show_status() {
     echo "  mcmAutoInject status         查看状态"
     echo "  mcmAutoInject pause <dur>    临时暂停 (30m / 2h / 1d)"
     echo "  mcmAutoInject resume         立即取消暂停"
+    echo "  mcmAutoInject stop           全局停止（无条件，需 unstop 取消）"
+    echo "  mcmAutoInject unstop         取消全局停止"
     echo ""
     echo "作用域:"
     echo "  --scope project  当前项目（默认）"
     echo "  --scope user     全局用户"
 
     show_pause_status
+    show_stop_status
 }
 
 # ----------------------------------------------------------------------------
@@ -366,6 +402,14 @@ main() {
 
         resume)
             do_resume
+            ;;
+
+        stop)
+            do_stop
+            ;;
+
+        unstop)
+            do_unstop
             ;;
     esac
 }

@@ -74,6 +74,9 @@ step2_delete() {
         return 0
     fi
 
+    # v3.2: op-log（在移至回收站前写，log.md 随记忆一起进回收站，恢复后保留历史）
+    log_memory_op "$memory_path" "delete" "→ trash" "user"
+
     move_to_trash "$memory_path" "$NAME"
 }
 

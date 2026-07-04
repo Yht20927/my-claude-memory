@@ -103,6 +103,9 @@ main() {
     # 增量更新搜索索引
     update_search_index "$memory_name" "$dest_dir" "$IS_GLOBAL"
 
+    # v3.2: op-log
+    log_memory_op "$dest_dir" "import" "tag=$primary_tag global=$IS_GLOBAL" "user"
+
     log "导入成功: $memory_name → $dest_dir"
 }
 

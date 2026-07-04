@@ -54,18 +54,27 @@ main() {
     local lock_token=$(acquire_lock "$lock_name")
     mcm_on_exit "release_lock '$lock_name' '$lock_token'"
 
+    # v3.2: 在 restore_from_trash 删除 .origin 前先取出原路径（旧代码在此之后才读
+    # origin_file，而 restore_from_trash 内部已 rm 它 → 搜索索引更新被静默跳过；顺手修）
+    local origin_file="$TRASH_DIR/.${ENTRY}.origin"
+    local origin_path=""
+    [ -f "$origin_file" ] && origin_path=$(cat "$origin_file")
+
     restore_from_trash "$ENTRY"
 
-    # 增量更新搜索索引（从 .origin 文件获取原始路径）
-    local origin_file="$TRASH_DIR/.${ENTRY}.origin"
-    if [ -f "$origin_file" ]; then
-        local origin_path=$(cat "$origin_file")
+    # 增量更新搜索索引
+    if [ -n "$origin_path" ]; then
         local is_global=false
         [[ "$origin_path" == *"/global/"* ]] && is_global=true
         local mem_name=$(basename "$origin_path")
         if [ -d "$origin_path" ]; then
             update_search_index "$mem_name" "$origin_path" "$is_global"
         fi
+    fi
+
+    # v3.2: op-log
+    if [ -n "$origin_path" ] && [ -d "$origin_path" ]; then
+        log_memory_op "$origin_path" "restore" "← trash:$ENTRY" "user"
     fi
 
     release_lock "$lock_name" "$lock_token"

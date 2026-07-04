@@ -16,6 +16,10 @@ mkdir -p "$INJECT_STATE_DIR"
 # pause 标记文件
 INJECT_PAUSE_FILE="${MEMORY_BASE:-$HOME/.claude/mcMemories}/.paused_until"
 
+# 全局 STOP kill-switch（v3.2 Phase 2）：.stop 存在则无条件跳过所有注入
+# 与 pause（带时长自动恢复）互补：STOP 需 mcmAutoInject unstop 显式取消
+INJECT_STOP_FILE="${MEMORY_BASE:-$HOME/.claude/mcMemories}/.stop"
+
 # 配置
 MAX_INJECT_TOKENS_ESTIMATE="${MAX_INJECT_TOKENS_ESTIMATE:-2000}"
 MAX_INJECT_MEMORIES="${MAX_INJECT_MEMORIES:-3}"
@@ -40,6 +44,13 @@ is_inject_paused() {
     # 已过期：清理掉 pause 文件
     rm -f "$INJECT_PAUSE_FILE" 2>/dev/null
     return 1
+}
+
+# ----------------------------------------------------------------------------
+# 全局 STOP 检查（v3.2）：.stop 文件存在则无条件停止注入
+# ----------------------------------------------------------------------------
+is_inject_stopped() {
+    [ -f "$INJECT_STOP_FILE" ]
 }
 
 # ----------------------------------------------------------------------------
@@ -324,6 +335,12 @@ session_start_inject() {
     local workspace="${1:-$(pwd)}"
     local output=""
 
+    # v3.2: 全局 STOP kill-switch（无条件，需显式 unstop）
+    if is_inject_stopped; then
+        log_injection "stopped" "" "" "session_start"
+        return
+    fi
+
     # v2.4: pause 检查
     if is_inject_paused; then
         log_injection "paused" "" "" "session_start"
@@ -390,6 +407,12 @@ $summary_text
 prompt_submit_inject() {
     local user_prompt="$1"
 
+    # v3.2: 全局 STOP kill-switch（无条件，需显式 unstop）
+    if is_inject_stopped; then
+        log_injection "stopped" "" "" "prompt_submit"
+        return
+    fi
+
     # v2.4: pause 检查
     if is_inject_paused; then
         log_injection "paused" "" "" "prompt_submit"
@@ -444,6 +467,8 @@ prompt_submit_inject() {
         output+=$(format_injection "$mem" "$mem_path" "$score")
         mark_injected "$mem"
         log_injection "prompt_submit" "$mem" "$score" "$kw_csv"
+        # v3.2: op-log（记忆级注入时间线，actor=hook）
+        log_memory_op "$mem_path" "inject" "score=$score kw=$kw_csv" "hook"
         injected=$((injected + 1))
     done
 
@@ -513,6 +538,9 @@ precompact_save() {
 
         # 清空 session_notes.md 以准备下次会话
         > "$notes_file"
+
+        # v3.2: op-log（会话压缩归档时间线，actor=hook）
+        log_memory_op "$project_dir" "precompact" "chunk=$chunk_name lines=$note_size" "hook"
 
         log "PreCompact: 会话摘要已保存 → $chunk_name"
         return

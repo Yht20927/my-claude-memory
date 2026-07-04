@@ -359,6 +359,9 @@ CHUNK_EOF
     # 增量更新搜索索引
     update_search_index "$MEMORY_NAME" "$memory_path" "$IS_GLOBAL"
 
+    # v3.2: op-log
+    log_memory_op "$memory_path" "init" "tags=$TAGS sources=${#source_files[@]} global=$IS_GLOBAL" "user"
+
     # 释放锁
     release_lock "$lock_name" "$lock_token"
     mcm_clear_exit_handlers

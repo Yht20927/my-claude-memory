@@ -255,6 +255,7 @@ main() {
 
     if [ ${#changed_files[@]} -eq 0 ]; then
         log "同步完成 - 无变化"
+        log_memory_op "$memory_dir" "sync" "updated=0" "user"
         release_lock "$lock_name" "$lock_token"
         mcm_clear_exit_handlers
         return
@@ -265,6 +266,9 @@ main() {
 
     # 增量更新搜索索引
     update_search_index "$mem_name" "$memory_dir" "$IS_GLOBAL"
+
+    # v3.2: op-log
+    log_memory_op "$memory_dir" "sync" "updated=${#changed_files[@]}" "user"
 
     release_lock "$lock_name" "$lock_token"
     mcm_clear_exit_handlers

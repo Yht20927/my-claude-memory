@@ -64,6 +64,38 @@ usage() {
 }
 
 # ============================================================================
+# 记忆级操作日志 (op-log, v3.2 Phase 2)
+# ----------------------------------------------------------------------------
+# 每次写操作追加一条到 <memory>/log.md，构成 grep 友好的时间线：
+#   grep '^## \[' <memory>/log.md   # 该记忆的全部变更历史
+# 与全局 NDJSON 事件总线互补：事件总线是命令级（cmd.start/end），
+# op-log 是记忆级（哪条记忆何时被 init/sync/inject/delete），按记忆隔离。
+# log.md 在 memory 根目录（不在 chunks/），对 search/index/doctor/status 无副作用。
+# ============================================================================
+log_memory_op() {
+    local mem_dir="$1"
+    local op="$2"
+    local detail="${3:-}"
+    local actor="${4:-user}"
+
+    [ -d "$mem_dir" ] || return 0
+    local log_file="$mem_dir/log.md"
+    if [ ! -f "$log_file" ]; then
+        {
+            echo "# 操作日志"
+            echo ""
+        } > "$log_file"
+    fi
+    local ts
+    ts=$(date '+%Y-%m-%dT%H:%M:%S')
+    {
+        echo "## [$ts] $op ($actor)"
+        [ -n "$detail" ] && echo "  $detail"
+        echo ""
+    } >> "$log_file"
+}
+
+# ============================================================================
 # 路径解析（跨平台，替代裸调 realpath）
 # ============================================================================
 
