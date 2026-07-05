@@ -31,11 +31,12 @@ allowed-tools: ["Bash", "Read", "Write", "Grep"]
 | `mcmJournal <文本>` | 一行命令追加会话笔记（PreCompact 时归档为 L3 chunk） | [commands/journal.sh](commands/journal.sh) |
 | `mcmDoctor [--fix]` | 健康检查 + 自动迁移脏 tag 目录 + 占位 chunk 报告 | [commands/doctor.sh](commands/doctor.sh) |
 | `mcmMark <名称>` | 标注 chunk 来源/证据等级（source/evidence → BM25 权重） | [commands/mark.sh](commands/mark.sh) |
+| `mcmLedger <子命令>` | 会话决策日志：add/list/resolve/show 结构化决策/待办/阻断 | [commands/ledger.sh](commands/ledger.sh) |
 
 ## 公共参数
 
 - `--global` - 对全局个人记忆操作（而非项目记忆）
-- `--json` - 机器可读 JSON 输出（list / search / status 支持）
+- `--json` - 机器可读 JSON 输出（list / search / status / ledger 支持）
 - `--scope` - 作用域：`project`（默认）或 `user`
 - `--help` - 显示帮助信息
 
@@ -201,4 +202,4 @@ pre-compact.sh hook 会在压缩前自动:
 
 ---
 
-*版本: v3.5 | inject 路径惰性求值 | mcmSearch --score 评分排序 | drift 100 点评分 | 证据/来源分层 (source/evidence → BM25 权重) | mcmMark | op-log | STOP kill-switch | doctor canary | BM25 注入 | NDJSON 事件总线 | .workspace 标记(B2) | 单一 BM25 评分(B5) | 动态标签 | 并发锁 | 回收站 | 相对路径 | 搜索索引 | 会话压缩 | 2026-07-04*
+*版本: v3.6 | 会话决策日志 ledger | SessionStart 注入 open items | event-sourcing resolve | mcmSearch --score 评分排序 | drift 100 点评分 | 证据/来源分层 (source/evidence → BM25 权重) | mcmMark | op-log | STOP kill-switch | doctor canary | BM25 注入 | NDJSON 事件总线 | .workspace 标记(B2) | 单一 BM25 评分(B5) | 动态标签 | 并发锁 | 回收站 | 相对路径 | 搜索索引 | 会话压缩 | 2026-07-05*

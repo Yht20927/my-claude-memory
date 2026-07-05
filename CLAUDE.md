@@ -6,6 +6,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 mcMemory (mcm) is a Claude Code skill that implements a hierarchical memory management system in pure Bash (v3.2). It persists project and personal knowledge to `~/.claude/mcMemories/` so AI context survives across sessions.
 
+## v3.6 fixes (2026-07-05) — 会话决策日志（Session Ledger，Phase 6）
+
+- **Ledger 结构化决策日志**: 每个记忆目录新增 `<memory>/ledger.md`，append-only、不可变、grep 友好。复用 op-log 的 `## [ts] type (actor)` 格式，扩展 `status:`/`resolves:`/`refs:`/`context:` 字段。
+- **`mcmLedger` 命令**: `add` / `list` / `resolve` / `show` 四个子命令，支持 `--type` / `--status` / `--since` / `--limit` / `--json` 过滤。`add` 可省略子命令名（`mcmLedger todo "修 X"`）。`resolve` 追加 `done` 条目并带 `resolves:` 引用，不编辑原条目（event-sourcing 语义）。
+- **SessionStart 自动注入未竟事项**: `session_start_inject` 在加载 L1 + auto L3 后，追加最近 N 条 open todo/blocker。受 `MCM_LEDGER_INJECT`（默认 1）/ `MCM_LEDGER_INJECT_COUNT`（默认 5）/ `MCM_LEDGER_INJECT_TYPES` / `MCM_LEDGER_INJECT_SINCE_DAYS` 控制。尊重 STOP/pause kill-switch，不走 BM25/cooldown 路径。
+- **op-log + NDJSON 事件接入**: `ledger.add` / `ledger.resolve` 事件写入 `.events.ndjson`，`log.md` 记录 `ledger` 操作。
+- **纯 Bash + 内联 Python**: `lib/ledger.sh` 提供解析/过滤/注入函数，`ledger_parse` / `ledger_open_entries` / `ledger_list` 均用单次 Python 调用，复杂度 O(n)。
+- 测试: 新增 `test_phase6.sh`（37 断言），总断言数 172 → 209。三连跑全绿。
+
 ## v3.5 fixes (2026-07-04) — inject.sh 常量惰性求值（Phase 5）
 
 - **根因修复 inject.sh 模块级常量冻结**: 旧实现在 source 时算定 `INJECT_STATE_DIR`/`INJECT_PAUSE_FILE`/`INJECT_STOP_FILE`（并 `mkdir -p` 副作用），调用方后改 `$MEMORY_BASE` 时（集成测试换 fixture、多 base 部署），常量仍指向旧值 → cooldown/pause/stop 写错地方，引发静默失败与跨运行 120s 内 flake（v3.4 phase4 journal 测试即踩此坑，v3.2 phase2 STOP 测试也有同源 workaround）。现各函数内联 `"${MEMORY_BASE:-$HOME/.claude/mcMemories}/<file>"` 在调用时读取现行值；`mkdir` 副作用移到 `mark_injected` 写时建。
@@ -179,8 +188,9 @@ All `$PYTHON -c "..."` calls in v2.0 pass file paths through `sys.argv` instead 
 | `mcmRestore` | Restore from trash |
 | `mcmEmptyTrash` | Permanently empty trash |
 | `mcmMark` | Mark chunk source/evidence → BM25 weight (v3.3) |
+| `mcmLedger` | 会话决策日志：add/list/resolve/show 结构化决策/待办/阻断 (v3.6) |
 
-Common flags: `--global`, `--json` (list/search/status), `--expand` (search), `--force` (delete/empty-trash).
+Common flags: `--global`, `--json` (list/search/status/ledger), `--expand` (search), `--force` (delete/empty-trash).
 
 ## AI condensation flow (important)
 

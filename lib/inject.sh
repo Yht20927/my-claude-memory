@@ -27,6 +27,10 @@ INJECT_COOLDOWN_SEC="${INJECT_COOLDOWN_SEC:-120}"
 # 此处设门槛过滤极弱匹配。0 = 接受任何正分（依赖 top-N + cooldown 节流）。
 INJECT_BM25_MIN_SCORE="${INJECT_BM25_MIN_SCORE:-0}"
 
+# v3.6: 加载 ledger 库（若存在），供 session_start_inject 注入未竟事项
+LEDGER_LIB="$(dirname "${BASH_SOURCE[0]}")/ledger.sh"
+[ -f "$LEDGER_LIB" ] && source "$LEDGER_LIB"
+
 # ----------------------------------------------------------------------------
 # pause 检查：若 .paused_until 存在且时间戳未过期，返回 0（已暂停）
 # v3.5: 路径惰性求值（调用时读 $MEMORY_BASE）
@@ -419,6 +423,19 @@ $summary_text
             mark_injected "$mem_tag"
             log_injection "session_start" "$mem_name" "" "auto"
         done
+    fi
+
+    # v3.6: ledger open items 注入（确定性注入，不走 BM25/cooldown）
+    if [ "${MCM_LEDGER_INJECT:-1}" = "1" ] && ! is_inject_stopped && ! is_inject_paused; then
+        if [ -n "$project_dir" ] && [ -d "$project_dir" ] && command -v _ledger_inject_block &>/dev/null; then
+            local ledger_block
+            ledger_block=$(_ledger_inject_block "$project_dir")
+            if [ -n "$ledger_block" ]; then
+                output+="
+$ledger_block
+"
+            fi
+        fi
     fi
 
     echo "$output"

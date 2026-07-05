@@ -1,9 +1,9 @@
 # mcMemory (mcm) — AI 编程助手的分层记忆管理系统
 
-[![Version](https://img.shields.io/badge/version-3.5-blue)](SKILL.md)
+[![Version](https://img.shields.io/badge/version-3.6-blue)](SKILL.md)
 [![Bash](https://img.shields.io/badge/language-bash-green)](#)
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey)](#)
-[![Tests](https://img.shields.io/badge/tests-172%2F172-brightgreen)](#)
+[![Tests](https://img.shields.io/badge/tests-209%2F209-brightgreen)](#)
 
 > 让 AI 编程助手拥有跨会话记忆。纯 Bash 实现，零外部依赖。
 
@@ -188,6 +188,7 @@ mcmImport ./backup.tar.gz --tags "backend"
 | `mcmRestore <条目>` | 从回收站恢复 |
 | `mcmEmptyTrash` | 清空回收站 |
 | `mcmAutoInject` | 开启/关闭自动注入 |
+| `mcmLedger` | 会话决策日志（add/list/resolve/show） |
 
 **公共参数：** `--global`（操作个人记忆）、`--json`（JSON 输出）、`--help`
 
@@ -243,6 +244,23 @@ mcmSearch <关键词> [--expand] [--global] [--json]
 - `--json` — JSON 格式输出
 
 使用预建搜索索引，亚秒级响应。
+
+### mcmLedger
+
+```
+mcmLedger add <type> <text> [opts]      # 追加条目（type 可省略 add）
+mcmLedger list [--type ...] [--status open] [--since N] [--limit N] [--json]
+mcmLedger resolve <id> [note]           # 关闭条目（追加 done + resolves）
+mcmLedger show <id>                     # 显示单条目全文
+```
+
+- `type`: `decision` | `blocker` | `todo` | `learning` | `done` | `note`
+- `--context <文本>` — 补充背景
+- `--refs <路径>` — 引用 chunk/源文件
+- `--actor user|agent|system` — 默认 `user`
+- `--status open` 用 event-sourcing 计算：排除已被 `resolve` 的条目
+
+SessionStart 自动注入最近 open todo/blocker（受 `MCM_LEDGER_INJECT_*` 配置）。
 
 ---
 
@@ -438,6 +456,7 @@ L4 优先使用相对路径 symlink，项目目录移动后引用仍然有效。
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
+| **v3.6** | 2026-07-05 | Phase 6 会话决策日志（Session Ledger）：新增 `<memory>/ledger.md` append-only 结构化决策/待办/阻断日志；`mcmLedger` 命令支持 add/list/resolve/show；`resolve` 追加 `done` 条目带 `resolves:` 引用（event-sourcing，不编辑原条目）；`list --status open` 动态计算 open 集合；SessionStart 自动注入最近 open todo/blocker（受 `MCM_LEDGER_INJECT_*` 控制）；op-log + NDJSON `ledger.add`/`ledger.resolve` 事件接入；新增 `test_phase6.sh` 37 断言；总断言 172 → 209 |
 | **v3.5** | 2026-07-04 | Phase 5 根因修复：inject.sh 模块级常量（INJECT_STATE_DIR/PAUSE_FILE/STOP_FILE）改为惰性求值（调用时读 `$MEMORY_BASE`），消除 source 时冻结导致的 cooldown/pause/stop 写错地址 + 跨运行 flake；移除 phase2/phase4 两处测试 workaround；inject-log.sh 解耦不再 source inject.sh；source inject.sh 不再污染 `$HOME/.inject_state`；172 项测试三连跑全绿 |
 | **v3.4** | 2026-07-04 | Phase 4 搜索评分+命令覆盖：`mcmSearch --score` 按 BM25×权重排序并显示分数（opt-in，复用注入评分管线）；新增 `test_phase4.sh` 24 断言覆盖 search/update --tags/delete-restore-empty-trash/load/journal/inject-log 八命令；修 inject.sh 常量冻结导致的 cooldown 测试 flake；172 项测试 |
 | **v3.3** | 2026-07-04 | Phase 3 评分制+证据分层：`mcmStatus --drift` 100 点评分（L4×8/orphan×8/stale×4/索引缺失×4/占位×2 + A-F 等级 + 索引缺失信号）；chunk frontmatter `source`/`evidence` 字段 → 搜索索引 `mcm-meta` 行 → `find_relevant_memories` BM25 × source_w × evidence_w（best evidence wins，agent×observed=0.595 默认折扣防幻觉）；`mcmMark` 命令人工标注；+16 断言 |
