@@ -234,6 +234,27 @@ it_device_id_sanitized() {
     assert_not_contains " " "$dev" "device id 不含空格"
 }
 
+# ----------------------------------------------------------------------------
+# mcmSync 迁移：device JSON 缺失时自动重建（既有记忆自愈迁移）
+# ----------------------------------------------------------------------------
+it_sync_migrates_missing_l4() {
+    _reset_device
+    export MCM_DEVICE="migbox"
+    local ws
+    ws=$(_seed_ws)
+    bash "$PROJECT_DIR/commands/init.sh" --name "mig-proj" --tags "tools" \
+        --description "mig" --workspace "$ws" >/dev/null 2>&1
+    local mem="$PROJECTS_DIR/tools/mig-proj"
+    assert_file_exists "$mem/.claude/l4/migbox.json" "init 后 device JSON 存在"
+
+    # 模拟未迁移（旧记忆无 device JSON）
+    rm -f "$mem/.claude/l4/migbox.json"
+    # mcmSync 应通过 step_migrate_l4 重建
+    bash "$PROJECT_DIR/commands/sync.sh" --name "mig-proj" --workspace "$ws" >/dev/null 2>&1
+    assert_file_exists "$mem/.claude/l4/migbox.json" "mcmSync 迁移重建 device JSON"
+    assert_equal "2 0 0" "$(check_l4_health "$mem/.claude")" "迁移后 L4 两源 valid"
+}
+
 run_its "Phase 7.1 L4 device-keyed registry" \
     "device id 三级解析"        it_device_id_resolution \
     "record 写 device JSON"     it_record_writes_device_json \
@@ -242,4 +263,5 @@ run_its "Phase 7.1 L4 device-keyed registry" \
     "多设备独立文件"            it_multi_device_independent \
     "init 端到端 device registry" it_init_creates_device_registry \
     "drift broken-l4 经 device" it_drift_broken_l4_via_device \
-    "device id 安全化防遍历"   it_device_id_sanitized
+    "device id 安全化防遍历"   it_device_id_sanitized \
+    "mcmSync 迁移缺失 L4"      it_sync_migrates_missing_l4

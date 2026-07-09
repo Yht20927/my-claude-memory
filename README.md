@@ -3,7 +3,7 @@
 [![Version](https://img.shields.io/badge/version-4.0-blue)](SKILL.md)
 [![Bash](https://img.shields.io/badge/language-bash-green)](#)
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey)](#)
-[![Tests](https://img.shields.io/badge/tests-306%2F306-brightgreen)](#)
+[![Tests](https://img.shields.io/badge/tests-312%2F312-brightgreen)](#)
 
 > 让 AI 编程助手拥有跨会话记忆。纯 Bash 实现，零外部依赖。
 
@@ -491,7 +491,7 @@ L4 优先使用相对路径 symlink，项目目录移动后引用仍然有效。
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
-| **v4.0** | 2026-07-09 | Phase 7 git 远程记忆共享：`$MEMORY_BASE` 单 git 仓库 + 手动 `mcmPush`/`mcmPull`；SessionStart opt-in `MCM_AUTOPULL=1` ff-only auto-pull（尊重 STOP/pause）；L4 弃软链改 device-keyed registry（`.claude/l4/<device>.json`，每设备一文件零冲突）；`.gitignore` 派生/本地态分离 + `.gitattributes` `merge=union` 零冲突合并 append-only 日志；`rebuild_derived` pull 后重建派生；新增 `mcmRemote`/`mcmPush`/`mcmPull`；改写式冲突不静默（`--ours/--theirs/--continue/--abort`）；新增 5 套测试共 97 断言，总 209 -> 306 |
+| **v4.0** | 2026-07-09 | Phase 7 git 远程记忆共享：`$MEMORY_BASE` 单 git 仓库 + 手动 `mcmPush`/`mcmPull`；SessionStart opt-in `MCM_AUTOPULL=1` ff-only auto-pull（尊重 STOP/pause）；L4 弃软链改 device-keyed registry（`.claude/l4/<device>.json`，每设备一文件零冲突）；`.gitignore` 派生/本地态分离 + `.gitattributes` `merge=union` 零冲突合并 append-only 日志；`rebuild_derived` pull 后重建派生；新增 `mcmRemote`/`mcmPush`/`mcmPull`；改写式冲突不静默（`--ours/--theirs/--continue/--abort`）；新增 5 套测试共 103 断言，总 209 -> 312 |
 | **v3.6** | 2026-07-05 | Phase 6 会话决策日志（Session Ledger）：新增 `<memory>/ledger.md` append-only 结构化决策/待办/阻断日志；`mcmLedger` 命令支持 add/list/resolve/show；`resolve` 追加 `done` 条目带 `resolves:` 引用（event-sourcing，不编辑原条目）；`list --status open` 动态计算 open 集合；SessionStart 自动注入最近 open todo/blocker（受 `MCM_LEDGER_INJECT_*` 控制）；op-log + NDJSON `ledger.add`/`ledger.resolve` 事件接入；新增 `test_phase6.sh` 37 断言；总断言 172 → 209 |
 | **v3.5** | 2026-07-04 | Phase 5 根因修复：inject.sh 模块级常量（INJECT_STATE_DIR/PAUSE_FILE/STOP_FILE）改为惰性求值（调用时读 `$MEMORY_BASE`），消除 source 时冻结导致的 cooldown/pause/stop 写错地址 + 跨运行 flake；移除 phase2/phase4 两处测试 workaround；inject-log.sh 解耦不再 source inject.sh；source inject.sh 不再污染 `$HOME/.inject_state`；172 项测试三连跑全绿 |
 | **v3.4** | 2026-07-04 | Phase 4 搜索评分+命令覆盖：`mcmSearch --score` 按 BM25×权重排序并显示分数（opt-in，复用注入评分管线）；新增 `test_phase4.sh` 24 断言覆盖 search/update --tags/delete-restore-empty-trash/load/journal/inject-log 八命令；修 inject.sh 常量冻结导致的 cooldown 测试 flake；172 项测试 |

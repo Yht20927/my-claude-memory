@@ -14,7 +14,7 @@ mcMemory (mcm) is a Claude Code skill that implements a hierarchical memory mana
 - **`.gitattributes` 零冲突合并**: `log.md`/`ledger.md` 标 `merge=union`（append-only 取两边不打冲突标记），`* text=auto eol=lf` 防跨平台 CRLF。
 - **新增命令**: `mcmRemote init/add/list/remove/device`、`mcmPush [--remote/--all/--message]`（commit + push，识别未推送 merge commit 而非仅 staged 变更）、`mcmPull [--abort/--ours/--theirs/--continue]`（fetch+merge，改写式冲突不静默）。
 - **冲突策略**: `summary.md`/`chunks` 改写式冲突人工裁定；`log.md`/`ledger.md`/`l4/<device>.json` 经 union/per-device 机制自动无冲突合并。
-- 测试: 新增 `test_phase7_l4.sh`(27)/`test_phase7_remote.sh`(27)/`test_phase7_pushpull.sh`(26)/`test_phase7_autopull.sh`(6)/`test_remote_e2e.sh`(11)，总断言 209 -> 306。三连跑全绿。
+- 测试: 新增 `test_phase7_l4.sh`(33)/`test_phase7_remote.sh`(27)/`test_phase7_pushpull.sh`(26)/`test_phase7_autopull.sh`(6)/`test_remote_e2e.sh`(11)，总断言 209 -> 312。三连跑全绿。
 
 ## v3.6 fixes (2026-07-05) — 会话决策日志（Session Ledger，Phase 6）
 

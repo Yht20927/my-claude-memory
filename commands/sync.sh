@@ -210,6 +210,26 @@ step3_update_l4_links() {
     done
 }
 
+# v4.0 迁移: 若当前设备 l4/<device>.json 缺失，为所有探测到的源文件记录 L4
+# （把旧格式软链/.source 迁移到 device registry；一次性，已有则跳过）。
+# 在 step1 之前运行，确保既有记忆下次 sync 即自愈迁移（不依赖源文件变更）。
+step_migrate_l4() {
+    local memory_dir="$1"
+    local l4_dir="$memory_dir/.claude"
+    [ ! -d "$l4_dir" ] && return
+    [ -z "${WORKSPACE_DIR:-}" ] && return
+
+    local device
+    device=$(current_device_id)
+    [ -f "$l4_dir/l4/$device.json" ] && return   # 已有 device registry，跳过
+
+    log "Step 0.5: L4 device registry 缺失，迁移源文件引用..."
+    local src
+    while IFS= read -r src; do
+        [ -n "$src" ] && record_l4_source "$memory_dir" "$src"
+    done < <(detect_source_files "$WORKSPACE_DIR" 2>/dev/null)
+}
+
 # ----------------------------------------------------------------------------
 # 主函数
 # ----------------------------------------------------------------------------
@@ -249,6 +269,7 @@ main() {
     log "开始增量同步: $mem_name"
 
     step0_health_check "$memory_dir"
+    step_migrate_l4 "$memory_dir"
 
     local changed_files=()
     while IFS= read -r file; do
