@@ -191,6 +191,13 @@ check_canary() {
 main() {
     parse_args "$@"
 
+    # v4.0 Phase 7: 搜索索引缺失/空时重建派生文件（新机 clone 后 / 索引损坏）。
+    # canary 依赖 .search_index，故在 canary 检查前重建。
+    if [ ! -s "$SEARCH_INDEX" ]; then
+        echo "• 搜索索引缺失，重建派生文件（.search_index + index.md）..."
+        rebuild_derived
+    fi
+
     local dirty_project_tags=()
     local dirty_global_tags=()
     while IFS= read -r t; do

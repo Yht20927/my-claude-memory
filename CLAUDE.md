@@ -4,7 +4,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project overview
 
-mcMemory (mcm) is a Claude Code skill that implements a hierarchical memory management system in pure Bash (v3.2). It persists project and personal knowledge to `~/.claude/mcMemories/` so AI context survives across sessions.
+mcMemory (mcm) is a Claude Code skill that implements a hierarchical memory management system in pure Bash (v4.0). It persists project and personal knowledge to `~/.claude/mcMemories/` so AI context survives across sessions, and shares memories across machines/teams via git (v4.0 Phase 7).
+
+## v4.0 fixes (2026-07-09) - git 远程记忆共享（Phase 7）
+
+- **git 远程共享**: `$MEMORY_BASE` 整体作为单一 git 仓库，手动 `mcmPush`/`mcmPull` 同步；SessionStart opt-in `MCM_AUTOPULL=1` 走 `git pull --ff-only`（永不阻塞会话，落后不可快进则静默跳过），尊重 STOP/pause kill-switch。团队可信场景下团队 remote 接收完整 repo（无需 subtree）。
+- **L4 device-keyed registry（弃用软链）**: L4 源文件引用从 `.claude/` 软链改为 `.claude/l4/<device>.json`，每设备一文件记录源文件相对路径。`current_device_id()` 三级解析：`MCM_DEVICE` env > `$MEMORY_BASE/.device` > `hostname`。新增 `record_l4_source`/`resolve_l4_source`；`check_l4_health` 改读 JSON 判 valid/broken（输出契约 `"valid broken copy"` 不变，copy 恒 0）。每设备独立文件 -> git 合并零冲突；弃用软链 -> 跨平台无碍。
+- **派生/本地态分离（.gitignore）**: 派生文件 `.search_index`/`index.md`(各层)/`hash.json` 与机器本地态 `.locks/`/`.inject_state/`/`.inject_log`/`.trash/`/`.events.ndjson`/`.session_log.md`/`.device`/`.workspace`/`.claude/`(除 `l4/`)全部 gitignore；pull/clone 后 `rebuild_derived()` 重建 `.search_index` + 缺失 `index.md`（从 chunks frontmatter 重建），`mcmDoctor` 在 `.search_index` 缺失时自动触发。
+- **`.gitattributes` 零冲突合并**: `log.md`/`ledger.md` 标 `merge=union`（append-only 取两边不打冲突标记），`* text=auto eol=lf` 防跨平台 CRLF。
+- **新增命令**: `mcmRemote init/add/list/remove/device`、`mcmPush [--remote/--all/--message]`（commit + push，识别未推送 merge commit 而非仅 staged 变更）、`mcmPull [--abort/--ours/--theirs/--continue]`（fetch+merge，改写式冲突不静默）。
+- **冲突策略**: `summary.md`/`chunks` 改写式冲突人工裁定；`log.md`/`ledger.md`/`l4/<device>.json` 经 union/per-device 机制自动无冲突合并。
+- 测试: 新增 `test_phase7_l4.sh`(27)/`test_phase7_remote.sh`(27)/`test_phase7_pushpull.sh`(26)/`test_phase7_autopull.sh`(6)/`test_remote_e2e.sh`(11)，总断言 209 -> 306。三连跑全绿。
 
 ## v3.6 fixes (2026-07-05) — 会话决策日志（Session Ledger，Phase 6）
 
@@ -131,7 +141,7 @@ Each command script:
 | L1 | Project name + description | `summary.md` |
 | L2 | Outline index: title, tags, summary, line ranges | `index.md` |
 | L3 | AI-condensed chunks with YAML frontmatter | `chunks/*.md` |
-| L4 | References to original source files (project only) | `.claude/` (symlinks or `.source` files) |
+| L4 | References to original source files (project only, device-keyed) | `.claude/l4/<device>.json` (v4.0) |
 
 ## Key v2.0 design points
 
@@ -155,8 +165,8 @@ Write operations (`init`, `sync`, `delete`, `update`, `restore`) acquire a lock 
 
 All `$PYTHON -c "..."` calls in v2.0 pass file paths through `sys.argv` instead of inline string interpolation, eliminating injection risk from special characters in paths. Example: `$PYTHON -c "open(sys.argv[1])" "$file"`
 
-### L4 links use relative paths
-
+### L4 device-keyed source registry (v4.0)
+`record_l4_source()` records each source file's relative path (via `calculate_relative_path()`, from the `.claude/` dir) into `.claude/l4/<device>.json`, keyed by `current_device_id()` (`MCM_DEVICE` env > `.device` > hostname). Each device writes its own file, so multi-machine git sync merges without conflict. Symlinks/`.source` removed; cross-platform clean. `check_l4_health()` reads the JSON to count valid/broken targets.
 `create_l4_link()` computes the relative path from the `.claude/` dir to the source file using `calculate_relative_path()`, which normalizes separators to `/`. Symlinks and `.source` files both store relative paths, surviving project directory relocation.
 
 ### Large file auto-splitting
@@ -189,8 +199,11 @@ All `$PYTHON -c "..."` calls in v2.0 pass file paths through `sys.argv` instead 
 | `mcmEmptyTrash` | Permanently empty trash |
 | `mcmMark` | Mark chunk source/evidence → BM25 weight (v3.3) |
 | `mcmLedger` | 会话决策日志：add/list/resolve/show 结构化决策/待办/阻断 (v3.6) |
+| `mcmRemote` | git 远程共享：init/add/list/remove/device (v4.0) |
+| `mcmPush` | 提交并推送记忆变更到 git remote (v4.0) |
+| `mcmPull` | 拉取并合并，冲突不静默 (v4.0) |
 
-Common flags: `--global`, `--json` (list/search/status/ledger), `--expand` (search), `--force` (delete/empty-trash).
+Common flags: `--global`, `--json` (list/search/status/ledger), `--expand` (search), `--force` (delete/empty-trash). Env: `MCM_AUTOPULL` (SessionStart ff-only auto-pull), `MCM_DEVICE` (override device id).
 
 ## AI condensation flow (important)
 

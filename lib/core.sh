@@ -465,73 +465,149 @@ update_global_index() {
 # L4 健康检查
 # ============================================================================
 
+# 当前设备标识（v4.0 Phase 7）: MCM_DEVICE 环境变量 > $MEMORY_BASE/.device > hostname
+# 用于 L4 device-keyed registry：每设备独立记录源文件路径。
+# 安全化：仅保留 [A-Za-z0-9._-]，其余替换为 _（防 MCM_DEVICE="../../../x" 路径遍历）。
+current_device_id() {
+    local dev=""
+    if [[ -n "${MCM_DEVICE:-}" ]]; then
+        dev="$MCM_DEVICE"
+    else
+        local device_file="${MEMORY_BASE:-$HOME/.claude/mcMemories}/.device"
+        if [[ -f "$device_file" ]]; then
+            dev=$(cat "$device_file" 2>/dev/null)
+        fi
+        [[ -z "$dev" ]] && dev=$(hostname 2>/dev/null || echo "unknown")
+    fi
+    # 文件名安全化：去路径分隔符/换行/空格等，防 .claude/l4/<device>.json 路径遍历
+    dev=$(printf '%s' "$dev" | tr -c 'A-Za-z0-9._-' '_' | sed 's/^_\+//; s/_\+$//')
+    [[ -z "$dev" ]] && dev="unknown"
+    printf '%s\n' "$dev"
+}
+
+# L4 健康检查（v4.0: 读 device-keyed JSON registry，弃用软链/.source）
+# 输出契约不变: "valid broken copy"（copy 恒 0，新格式无 copy 概念）
 check_l4_health() {
     local l4_dir="$1"
-    local valid=0
-    local broken=0
-    local copy=0
 
-    if [ ! -d "$l4_dir" ]; then
+    local device
+    device=$(current_device_id)
+    local json_file="$l4_dir/l4/$device.json"
+
+    if [ ! -f "$json_file" ]; then
         echo "0 0 0"
         return
     fi
 
-    for link in "$l4_dir"/*; do
-        [ -f "$link" ] || [ -L "$link" ] || continue
-        if [ -L "$link" ]; then
-            if [ -e "$link" ]; then
-                valid=$((valid + 1))
-            else
-                broken=$((broken + 1))
-            fi
-        elif [[ "$link" == *.source ]]; then
-            local target=$(cat "$link" 2>/dev/null)
-            # 相对路径需基于 .source 文件所在目录解析
-            if [[ "$target" != /* ]]; then
-                target="$(dirname "$link")/$target"
-            fi
-            if [ -e "$target" ]; then
-                valid=$((valid + 1))
-            else
-                broken=$((broken + 1))
-            fi
-        else
-            copy=$((copy + 1))
-        fi
-    done
-
-    echo "$valid $broken $copy"
+    $PYTHON -c "
+import sys, os, json
+l4_dir = sys.argv[1]
+json_file = sys.argv[2]
+try:
+    with open(json_file, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+except Exception:
+    print('0 0 0')
+    sys.exit(0)
+sources = data.get('sources', {})
+if not isinstance(sources, dict):
+    sources = {}
+valid = broken = 0
+for fname, rel in sources.items():
+    if not isinstance(rel, str):
+        continue
+    target = rel if os.path.isabs(rel) else os.path.join(l4_dir, rel)
+    if os.path.exists(target):
+        valid += 1
+    else:
+        broken += 1
+print('%d %d 0' % (valid, broken))
+" "$l4_dir" "$json_file"
 }
 
 # ============================================================================
-# L4 链接创建（优先相对路径，Windows 兼容降级）
+# L4 device registry（v4.0 Phase 7: 弃用软链，每设备一 JSON 文件）
 # ============================================================================
 
-create_l4_link() {
-    local source_file="$1"
-    local link_dir="$2"
+# 记录一条 L4 源引用到当前设备 registry: .claude/l4/<device>.json
+# sources[<basename>] = 相对 .claude 目录的路径（复用 calculate_relative_path）
+record_l4_source() {
+    local memory_path="$1"
+    local source_file="$2"
 
-    mkdir -p "$link_dir"
+    local l4_dir="$memory_path/.claude"
+    local device
+    device=$(current_device_id)
+    local json_dir="$l4_dir/l4"
+    local json_file="$json_dir/$device.json"
+    local filename
+    filename=$(basename "$source_file")
 
-    local filename=$(basename "$source_file")
-    local link_path="$link_dir/$filename"
+    mkdir -p "$json_dir"
 
-    # 清除旧的
-    rm -f "$link_path" "$link_path.source" 2>/dev/null
+    local rel_path
+    rel_path=$(calculate_relative_path "$l4_dir" "$source_file")
 
-    # 计算相对于 link_dir 的源文件路径
-    local rel_path=$(calculate_relative_path "$link_dir" "$source_file")
+    $PYTHON -c "
+import sys, json, os
+json_file = sys.argv[1]
+device = sys.argv[2]
+filename = sys.argv[3]
+rel_path = sys.argv[4]
+data = {'device': device, 'sources': {}}
+if os.path.exists(json_file):
+    try:
+        with open(json_file, 'r', encoding='utf-8') as f:
+            loaded = json.load(f)
+        if isinstance(loaded, dict):
+            data = loaded
+    except Exception:
+        pass
+data.setdefault('device', device)
+sources = data.setdefault('sources', {})
+sources[filename] = rel_path
+tmp = json_file + '.tmp'
+with open(tmp, 'w', encoding='utf-8') as f:
+    json.dump(data, f, ensure_ascii=False, indent=2, sort_keys=True)
+    f.write('\n')
+os.replace(tmp, json_file)
+" "$json_file" "$device" "$filename" "$rel_path"
 
-    # 尝试 symlink（优先相对路径）
-    ln -sf "$rel_path" "$link_path" 2>/dev/null
+    # 渐进迁移：清理该 basename 的旧格式残留（软链/.source）
+    rm -f "$l4_dir/$filename" "$l4_dir/$filename.source" 2>/dev/null
 
-    if [ -L "$link_path" ] && [ -e "$link_path" ]; then
-        log "  Created L4 symlink: $filename (→ $rel_path)"
+    log "  Recorded L4 source: $filename (device=$device, -> $rel_path)"
+}
+
+# 解析当前设备某源文件的绝对路径；未记录返回空
+resolve_l4_source() {
+    local memory_path="$1"
+    local source_file="$2"
+    local l4_dir="$memory_path/.claude"
+    local filename
+    filename=$(basename "$source_file")
+    local device
+    device=$(current_device_id)
+    local json_file="$l4_dir/l4/$device.json"
+    [ ! -f "$json_file" ] && return
+
+    local rel_path
+    rel_path=$($PYTHON -c "
+import sys, json
+try:
+    with open(sys.argv[1], 'r', encoding='utf-8') as f:
+        data = json.load(f)
+    sources = data.get('sources', {})
+    if isinstance(sources, dict):
+        print(sources.get(sys.argv[2], ''))
+except Exception:
+    pass
+" "$json_file" "$filename")
+    [ -z "$rel_path" ] && return
+    if [[ "$rel_path" != /* ]]; then
+        echo "$l4_dir/$rel_path"
     else
-        # Windows 降级: .source 引用文件也存相对路径
-        rm -f "$link_path" 2>/dev/null
-        echo "$rel_path" > "$link_path.source"
-        log "  Created L4 reference: $filename.source (symlink unavailable)"
+        echo "$rel_path"
     fi
 }
 
@@ -1116,3 +1192,86 @@ rebuild_search_index() {
 # events.sh 提供 emit_event / mcm_on_exit / mcm_run_command；依赖 core.sh
 # 中的 MCM_EVENTS_* 配置，所以必须在配置块之后 source。
 source "$(dirname "${BASH_SOURCE[0]}")/events.sh"
+# ============================================================================
+# 派生文件重建（v4.0 Phase 7: pull/clone 后重建 gitignore 的派生文件）
+# ============================================================================
+
+# 从 chunks 重建单记忆 index.md(L2)。读 chunk frontmatter 的 source_file 分组。
+# 与 init 的 step2(从源文件生成)不同：此处从 chunks 重建，因 pull 后源文件可能不存在。
+rebuild_l2_index_from_chunks() {
+    local memory_path="$1"
+    local chunks_dir="$memory_path/chunks"
+    local index_path="$memory_path/index.md"
+
+    if [ ! -d "$chunks_dir" ]; then
+        printf '# L2 大纲索引\n\n' > "$index_path"
+        return
+    fi
+
+    $PYTHON -c "
+import sys, os, glob
+memory_path = sys.argv[1]
+chunks_dir = os.path.join(memory_path, 'chunks')
+index_path = os.path.join(memory_path, 'index.md')
+
+def read_frontmatter(path):
+    try:
+        with open(path, 'r', encoding='utf-8', errors='replace') as f:
+            if f.readline().strip() != '---':
+                return {}
+            fm = {}
+            for line in f:
+                if line.strip() == '---':
+                    break
+                if ':' in line:
+                    k, _, v = line.partition(':')
+                    fm[k.strip()] = v.strip()
+            return fm
+    except Exception:
+        return {}
+
+chunks = sorted(glob.glob(os.path.join(chunks_dir, '*.md')))
+groups = {}
+order = []
+for chunk in chunks:
+    name = os.path.basename(chunk)
+    fm = read_frontmatter(chunk)
+    src = os.path.basename(fm.get('source_file', name))
+    ctype = fm.get('type', 'md')
+    try:
+        with open(chunk, 'r', encoding='utf-8', errors='replace') as f:
+            n = sum(1 for _ in f)
+    except Exception:
+        n = 0
+    if src not in groups:
+        groups[src] = []
+        order.append(src)
+    groups[src].append((name, ctype, n))
+
+out = ['# L2 大纲索引', '']
+for src in order:
+    out.append('## ' + src)
+    for (name, ctype, n) in groups[src]:
+        out.append('- **%s** | type: %s | lines: 1-%d' % (name, ctype, n))
+        out.append('  > 源文件内容摘要')
+    out.append('')
+with open(index_path, 'w', encoding='utf-8') as f:
+    f.write('\n'.join(out))
+" "$memory_path"
+
+    log "  Rebuilt L2 index: $index_path"
+}
+
+# 重建所有派生文件: .search_index(全量) + 各记忆 index.md(从 chunks)。
+# hash.json 不主动建(下次 mcmSync 自然补)。L4 是同步数据,不在此列。
+# index.md 总是重建(纯派生无手编辑),保证 pull 后反映最新 chunks(防过时)。
+rebuild_derived() {
+    log "Rebuilding derived files (search index + L2 indexes)..."
+    rebuild_search_index
+
+    local chunks_dir mem_dir
+    while IFS= read -r -d '' chunks_dir; do
+        mem_dir=$(dirname "$chunks_dir")
+        rebuild_l2_index_from_chunks "$mem_dir"
+    done < <(find "$PROJECTS_DIR" "$GLOBAL_DIR" -type d -name chunks -print0 2>/dev/null)
+}

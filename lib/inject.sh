@@ -375,6 +375,23 @@ session_start_inject() {
         return
     fi
 
+    # v4.0 Phase 7: SessionStart auto-pull（opt-in, ff-only, 永不阻塞会话）
+    # STOP/pause 已在上方 early-return，故此处仅在未停时执行。
+    # --ff-only: 能快进则前进；落后不可快进时静默跳过，不产生 merge、不冲突。
+    if [ "${MCM_AUTOPULL:-0}" = "1" ] && command -v git &>/dev/null && [ -d "${MEMORY_BASE:-$HOME/.claude/mcMemories}/.git" ]; then
+        local ap_base="${MEMORY_BASE:-$HOME/.claude/mcMemories}"
+        local ap_remote="${MCM_AUTOPULL_REMOTE:-origin}"
+        local ap_branch
+        ap_branch=$(git -C "$ap_base" branch --show-current 2>/dev/null || echo main)
+        if git -C "$ap_base" pull --ff-only "$ap_remote" "$ap_branch" 2>/dev/null; then
+            log_injection "autoppull" "" "" "fast-forwarded"
+            emit_event "autoppull.ok" 2>/dev/null || true
+        else
+            log_injection "autoppull" "" "" "skipped (non-ff or failed)"
+            emit_event "autoppull.skip" 2>/dev/null || true
+        fi
+    fi
+
     # 项目记忆 L1
     local project_dir=$(find_project_memory_dir "$workspace" 2>/dev/null)
     if [ -n "$project_dir" ] && [ -f "$project_dir/summary.md" ]; then

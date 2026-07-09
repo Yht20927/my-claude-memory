@@ -234,10 +234,8 @@ step4_create_l4_links() {
     shift
     local source_files=("$@")
 
-    local l4_dir="$project_dir/.claude"
-
     for file in "${source_files[@]}"; do
-        create_l4_link "$file" "$l4_dir"
+        record_l4_source "$project_dir" "$file"
     done
 }
 

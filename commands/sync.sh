@@ -36,7 +36,7 @@ parse_args() {
 # ----------------------------------------------------------------------------
 
 step0_health_check() {
-    log "Step 0: 健康检查 - Checking L4 links..."
+    log "Step 0: 健康检查 - Checking L4 registry..."
 
     local memory_dir="$1"
     local l4_dir="$memory_dir/.claude"
@@ -46,7 +46,7 @@ step0_health_check() {
         local valid=$(echo "$result" | cut -d' ' -f1)
         local broken=$(echo "$result" | cut -d' ' -f2)
         local copy=$(echo "$result" | cut -d' ' -f3)
-        log "  symlinks: ${valid} valid, ${broken} broken, ${copy} copies"
+        log "  L4 sources: ${valid} valid, ${broken} broken, ${copy} copy (v4.0 device registry)"
     else
         log "  No .claude directory (global memory or not initialized)"
     fi
@@ -206,7 +206,7 @@ step3_update_l4_links() {
     for rel_path in "${changed_files[@]}"; do
         local filepath="$WORKSPACE_DIR/$rel_path"
         [ ! -f "$filepath" ] && continue
-        create_l4_link "$filepath" "$l4_dir"
+        record_l4_source "$memory_dir" "$filepath"
     done
 }
 

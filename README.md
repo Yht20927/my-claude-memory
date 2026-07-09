@@ -1,9 +1,9 @@
 # mcMemory (mcm) — AI 编程助手的分层记忆管理系统
 
-[![Version](https://img.shields.io/badge/version-3.6-blue)](SKILL.md)
+[![Version](https://img.shields.io/badge/version-4.0-blue)](SKILL.md)
 [![Bash](https://img.shields.io/badge/language-bash-green)](#)
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey)](#)
-[![Tests](https://img.shields.io/badge/tests-209%2F209-brightgreen)](#)
+[![Tests](https://img.shields.io/badge/tests-306%2F306-brightgreen)](#)
 
 > 让 AI 编程助手拥有跨会话记忆。纯 Bash 实现，零外部依赖。
 
@@ -92,8 +92,8 @@ L2  大纲索引                标题 · 标签 · 摘要句 · 行号范围 ·
     ──────────              index.md
 L3  浓缩内容                AI 加工后的结构化知识块（大文件自动按标题拆分）
     ──────────              chunks/*.md（带 YAML frontmatter）
-L4  原始链接                指向源文件的引用，优先相对路径（仅项目记忆）
-    ──────────              .claude/（symlink 或 .source 文件）
+L4  原始链接                指向源文件的引用（device-keyed，仅项目记忆）
+    ──────────              .claude/l4/<device>.json
 ```
 
 - **L1** — 顶层目录：项目名称、一句话简介、标签
@@ -189,6 +189,9 @@ mcmImport ./backup.tar.gz --tags "backend"
 | `mcmEmptyTrash` | 清空回收站 |
 | `mcmAutoInject` | 开启/关闭自动注入 |
 | `mcmLedger` | 会话决策日志（add/list/resolve/show） |
+| `mcmRemote` | git 远程共享：init/add/list/remove/device |
+| `mcmPush` | 提交并推送记忆到 git remote |
+| `mcmPull` | 拉取并合并，冲突不静默 |
 
 **公共参数：** `--global`（操作个人记忆）、`--json`（JSON 输出）、`--help`
 
@@ -264,6 +267,38 @@ SessionStart 自动注入最近 open todo/blocker（受 `MCM_LEDGER_INJECT_*` �
 
 ---
 
+## 远程共享（git，v4.0）
+
+把记忆同步到多台机器或团队：`~/.claude/mcMemories/` 整体作为一个 git 仓库。派生文件（`.search_index`/`index.md`/`hash.json`）与机器本地态自动 gitignore；`log.md`/`ledger.md` 经 `.gitattributes` 的 `merge=union` 自动无冲突合并。
+
+**首次启用（已有记忆的机器）**:
+```bash
+mcmRemote init --remote git@github.com:me/my-memories.git --device my-laptop
+# -> git init + .gitignore/.gitattributes + .device 盖戳 + 首次提交/推送
+```
+
+**新机器接入**:
+```bash
+git clone git@github.com:me/my-memories.git ~/.claude/mcMemories
+mcmRemote device set my-desktop          # 盖戳本机 device id
+mcmDoctor                                # 重建 .search_index + index.md
+# 对每个本地项目绑定（记录本机 L4 + .workspace）：
+cd ~/project/foo && mcmInit --name foo --tags tools --description "..."
+```
+
+**日常同步**:
+```bash
+mcmPush                                  # 提交并推送（默认 origin）
+mcmPush --remote team --all              # 推到指定/全部 remote
+mcmPull                                  # 拉取并合并
+# 冲突时（改写式文件）：mcmPull --ours <file> / --theirs / --continue / --abort
+```
+
+**自动拉取（opt-in）**: `MCM_AUTOPULL=1` 时 SessionStart 走 `git pull --ff-only`，落后可快进则前进、否则静默跳过，永不阻塞会话；尊重 STOP/pause。
+
+> L4 源文件引用按设备记录（`.claude/l4/<device>.json`），每设备一文件，多机 git 合并零冲突。
+
+---
 ## 自动注入（Hook 系统）
 
 mcMemory 支持通过 Hook 实现自动记忆管理，无需手动操作：
@@ -349,7 +384,7 @@ mcmInit --tags "mobile,iOS" --name "my-ios-app"
 |------|---------|-----------|-----------------|------|
 | Linux | `ln -sf` | `sha256sum` | ✅ | 完全支持 |
 | macOS | `ln -sf` | `shasum -a 256` | ✅ | 完全支持 |
-| Windows (Git Bash) | `.source` 文件 | Python `hashlib` | ✅ | L4 降级但功能完整 |
+| Windows (Git Bash) | device JSON（无软链） | Python `hashlib` | ✅ | 完全支持（v4.0 弃用软链） |
 | Windows (WSL) | `ln -sf` | `sha256sum` | ✅ | 完全支持 |
 
 **降级策略：** symlink 不可用 → `.source` 引用文件 · `sha256sum` 不可用 → `shasum` → Python · `flock` 不可用 → `mkdir` 原子锁
@@ -399,9 +434,9 @@ mcMemory/
 │   ├── restore.sh              # mcmRestore
 │   └── empty-trash.sh          # mcmEmptyTrash
 └── tests/
-    ├── test_core.sh            # 单元测试（64 项断言）
+    ├── test_core.sh            # 单元测试
     ├── run_all.sh              # 测试入口
-    └── integration/            # 集成测试（68 项断言：hook 端到端 / sync 幂等 / 并发安全 / export-import / phase2 可观测性）
+    └── integration/            # 集成测试（306 项断言：hook/sync/并发/export-import/phase2-7 全链路）
 ```
 
 ### 数据存储
@@ -436,7 +471,7 @@ mcMemory/
 超过 200 行的源文件按 `##` 标题自动拆分为多个 chunk。阈值可通过 `CHUNK_SPLIT_THRESHOLD` 调整。
 
 **如何跨机器分享记忆？**
-`mcmExport` 导出为 tar.gz，`mcmImport` 在新机器导入。
+`mcmExport`/`mcmImport` 导出归档；或用 git 远程共享（v4.0）：`mcmRemote init` 建仓后 `mcmPush`/`mcmPull` 同步，`MCM_AUTOPULL=1` 开 SessionStart 自动拉取。
 
 **误删了怎么办？**
 `mcmDelete` 移至回收站而非永久删除。`mcmRestore --list` 查看，`mcmRestore <条目>` 恢复。
@@ -456,6 +491,7 @@ L4 优先使用相对路径 symlink，项目目录移动后引用仍然有效。
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
+| **v4.0** | 2026-07-09 | Phase 7 git 远程记忆共享：`$MEMORY_BASE` 单 git 仓库 + 手动 `mcmPush`/`mcmPull`；SessionStart opt-in `MCM_AUTOPULL=1` ff-only auto-pull（尊重 STOP/pause）；L4 弃软链改 device-keyed registry（`.claude/l4/<device>.json`，每设备一文件零冲突）；`.gitignore` 派生/本地态分离 + `.gitattributes` `merge=union` 零冲突合并 append-only 日志；`rebuild_derived` pull 后重建派生；新增 `mcmRemote`/`mcmPush`/`mcmPull`；改写式冲突不静默（`--ours/--theirs/--continue/--abort`）；新增 5 套测试共 97 断言，总 209 -> 306 |
 | **v3.6** | 2026-07-05 | Phase 6 会话决策日志（Session Ledger）：新增 `<memory>/ledger.md` append-only 结构化决策/待办/阻断日志；`mcmLedger` 命令支持 add/list/resolve/show；`resolve` 追加 `done` 条目带 `resolves:` 引用（event-sourcing，不编辑原条目）；`list --status open` 动态计算 open 集合；SessionStart 自动注入最近 open todo/blocker（受 `MCM_LEDGER_INJECT_*` 控制）；op-log + NDJSON `ledger.add`/`ledger.resolve` 事件接入；新增 `test_phase6.sh` 37 断言；总断言 172 → 209 |
 | **v3.5** | 2026-07-04 | Phase 5 根因修复：inject.sh 模块级常量（INJECT_STATE_DIR/PAUSE_FILE/STOP_FILE）改为惰性求值（调用时读 `$MEMORY_BASE`），消除 source 时冻结导致的 cooldown/pause/stop 写错地址 + 跨运行 flake；移除 phase2/phase4 两处测试 workaround；inject-log.sh 解耦不再 source inject.sh；source inject.sh 不再污染 `$HOME/.inject_state`；172 项测试三连跑全绿 |
 | **v3.4** | 2026-07-04 | Phase 4 搜索评分+命令覆盖：`mcmSearch --score` 按 BM25×权重排序并显示分数（opt-in，复用注入评分管线）；新增 `test_phase4.sh` 24 断言覆盖 search/update --tags/delete-restore-empty-trash/load/journal/inject-log 八命令；修 inject.sh 常量冻结导致的 cooldown 测试 flake；172 项测试 |

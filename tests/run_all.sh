@@ -38,6 +38,11 @@ run_suite "Integration: phase2 observability" "$TEST_DIR/integration/test_phase2
 run_suite "Integration: phase3 scoring+evidence" "$TEST_DIR/integration/test_phase3.sh"
 run_suite "Integration: phase4 command coverage" "$TEST_DIR/integration/test_phase4.sh"
 run_suite "Integration: phase6 ledger"            "$TEST_DIR/integration/test_phase6.sh"
+run_suite "Integration: phase7 L4 device registry" "$TEST_DIR/integration/test_phase7_l4.sh"
+run_suite "Integration: phase7 mcmRemote + rebuild" "$TEST_DIR/integration/test_phase7_remote.sh"
+run_suite "Integration: phase7 push/pull + conflict" "$TEST_DIR/integration/test_phase7_pushpull.sh"
+run_suite "Integration: phase7 SessionStart auto-pull" "$TEST_DIR/integration/test_phase7_autopull.sh"
+run_suite "Integration: phase7 remote sharing e2e" "$TEST_DIR/integration/test_remote_e2e.sh"
 
 echo ""
 echo "=========================================="

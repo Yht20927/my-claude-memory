@@ -32,6 +32,9 @@ allowed-tools: ["Bash", "Read", "Write", "Grep"]
 | `mcmDoctor [--fix]` | 健康检查 + 自动迁移脏 tag 目录 + 占位 chunk 报告 | [commands/doctor.sh](commands/doctor.sh) |
 | `mcmMark <名称>` | 标注 chunk 来源/证据等级（source/evidence → BM25 权重） | [commands/mark.sh](commands/mark.sh) |
 | `mcmLedger <子命令>` | 会话决策日志：add/list/resolve/show 结构化决策/待办/阻断 | [commands/ledger.sh](commands/ledger.sh) |
+| `mcmRemote <子命令>` | git 远程共享：init/add/list/remove/device | [commands/remote.sh](commands/remote.sh) |
+| `mcmPush` | 提交并推送记忆到 git remote | [commands/push.sh](commands/push.sh) |
+| `mcmPull` | 拉取并合并，冲突不静默 | [commands/pull.sh](commands/pull.sh) |
 
 ## 公共参数
 
@@ -93,7 +96,7 @@ mcmInjectLog --json
 │   │       ├── index.md         # L2
 │   │       ├── hash.json        # 文件哈希（相对路径 key）
 │   │       ├── chunks/          # L3
-│   │       └── .claude/         # L4
+│   │   │       └── .claude/         # L4 device registry（.claude/l4/<device>.json）
 ├── global/                      # 个人全局记忆（L1-L3）
 │   ├── index.md
 │   ├── auto/                    # 自动加载型
@@ -108,7 +111,7 @@ mcmInjectLog --json
 | L1 | 项目文件夹 | 项目名 + 简介 |
 | L2 | 大纲索引 | 标题 + 标签 + 摘要句 + 行号范围 |
 | L3 | 浓缩内容 | 从原始文件 AI 浓缩的核心内容（chunks/*.md） |
-| L4 | 原始链接 | 指向源文件的引用（仅项目，优先相对路径 symlink） |
+| L4 | 原始链接 | 指向源文件的引用（仅项目，device-keyed JSON registry） |
 
 ## 架构说明 (v2.0)
 
@@ -202,4 +205,4 @@ pre-compact.sh hook 会在压缩前自动:
 
 ---
 
-*版本: v3.6 | 会话决策日志 ledger | SessionStart 注入 open items | event-sourcing resolve | mcmSearch --score 评分排序 | drift 100 点评分 | 证据/来源分层 (source/evidence → BM25 权重) | mcmMark | op-log | STOP kill-switch | doctor canary | BM25 注入 | NDJSON 事件总线 | .workspace 标记(B2) | 单一 BM25 评分(B5) | 动态标签 | 并发锁 | 回收站 | 相对路径 | 搜索索引 | 会话压缩 | 2026-07-05*
+*版本: v4.0 | git 远程记忆共享（mcmRemote/mcmPush/mcmPull） | L4 device-keyed registry（弃软链） | .gitignore 派生分离 + .gitattributes merge=union | SessionStart ff-only auto-pull | 会话决策日志 ledger | drift 100 点评分 | 证据/来源分层 | mcmMark | op-log | STOP kill-switch | doctor canary | BM25 注入 | NDJSON 事件总线 | 2026-07-09*
